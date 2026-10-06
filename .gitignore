@@ -1,0 +1,52 @@
+# ---------- Unity ----------
+unity/ClimbGame/[Ll]ibrary/
+unity/ClimbGame/[Tt]emp/
+unity/ClimbGame/[Oo]bj/
+unity/ClimbGame/[Bb]uild/
+unity/ClimbGame/[Bb]uilds/
+unity/ClimbGame/[Ll]ogs/
+unity/ClimbGame/[Uu]ser[Ss]ettings/
+unity/ClimbGame/[Mm]emoryCaptures/
+unity/ClimbGame/[Rr]ecordings/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.apk
+*.aab
+crashlytics-buildid.txt
+sysinfo.txt
+.vs/
+.vscode/
+.idea/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# ---------- Models & large data ----------
+models/*
+!models/.gitkeep
+*.task
+*.tflite
+*.mp4
+recordings/
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
