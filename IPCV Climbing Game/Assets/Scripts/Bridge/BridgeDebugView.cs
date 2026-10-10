@@ -34,14 +34,16 @@ namespace IPCV.Bridge
                 {
                     GUILayout.Label($"Player {p.id}: {(p.tracked ? "tracked" : "lost")}");
                     if (!p.tracked) continue;
-                    if (p.pose.Length == 33)
-                        GUILayout.Label($"Wrists L ({p.pose[15].position[0]:F2}, {p.pose[15].position[1]:F2}) R ({p.pose[16].position[0]:F2}, {p.pose[16].position[1]:F2})");
+                    if (p.TryGetJoint(PoseJoint.LeftWrist, out PoseLandmark left))
+                        GUILayout.Label($"Left wrist ({left.position[0]:F2}, {left.position[1]:F2}) {left.state}");
+                    if (p.TryGetJoint(PoseJoint.RightWrist, out PoseLandmark right))
+                        GUILayout.Label($"Right wrist ({right.position[0]:F2}, {right.position[1]:F2}) {right.state}");
                     if (p.world_position_m.Length == 3)
                         GUILayout.Label($"Position m: ({p.world_position_m[0]:F2}, {p.world_position_m[1]:F2}, {p.world_position_m[2]:F2})");
                     if (p.head_rotation_deg.Length == 3)
                         GUILayout.Label($"Head yaw/pitch/roll: {p.head_rotation_deg[0]:F1}, {p.head_rotation_deg[1]:F1}, {p.head_rotation_deg[2]:F1}");
                     foreach (MotionSignal s in p.motion_signals)
-                        GUILayout.Label($"{s.name}: {s.active} (confidence {s.confidence:F2})");
+                        GUILayout.Label($"{s.name}: {s.active}");
                     if (faces.TryGetTexture(p.id, out Texture2D texture))
                         GUILayout.Box(texture, GUILayout.Width(128), GUILayout.Height(128));
                 }

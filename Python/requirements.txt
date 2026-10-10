@@ -1,0 +1,8 @@
+# Shared tracking environment: Python 3.12. The bridge demo needs no packages.
+mediapipe==1.1.0
+opencv-contrib-python==5.0.0.93
+numpy==2.5.4
+scipy==1.18.1
+# Pose evaluation and tests.
+matplotlib==3.11.2
+pytest==9.1.1

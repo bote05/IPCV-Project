@@ -3,6 +3,15 @@ using System.Collections.Generic;
 
 namespace IPCV.Bridge
 {
+    public enum PoseJoint
+    {
+        Nose = 0, LeftShoulder = 1, RightShoulder = 2, LeftElbow = 3, RightElbow = 4,
+        LeftWrist = 5, RightWrist = 6, LeftHip = 7, RightHip = 8,
+        LeftKnee = 9, RightKnee = 10, LeftAnkle = 11, RightAnkle = 12
+    }
+
+    public enum JointState { Lost = 0, Acquiring = 1, Predicted = 2, Tracked = 3 }
+
     [Serializable]
     public sealed class TrackingFrame
     {
@@ -39,20 +48,29 @@ namespace IPCV.Bridge
         public PoseLandmark[] pose;
         public double[] face_bbox, head_rotation_deg, world_position_m;
         public MotionSignal[] motion_signals;
+        public MotionEvent[] events;
 
         public bool IsValid()
         {
-            if ((id != 1 && id != 2) || pose == null || (pose.Length != 0 && pose.Length != 33)
+            if ((id != 1 && id != 2) || pose == null || (pose.Length != 0 && pose.Length != 13)
                 || !Numbers.OptionalVector(face_bbox, 4) || !Numbers.OptionalVector(head_rotation_deg, 3)
-                || !Numbers.OptionalVector(world_position_m, 3) || motion_signals == null) return false;
+                || !Numbers.OptionalVector(world_position_m, 3) || motion_signals == null || events == null) return false;
             if (!tracked && (pose.Length + face_bbox.Length + head_rotation_deg.Length
-                + world_position_m.Length + motion_signals.Length != 0)) return false;
+                + world_position_m.Length + motion_signals.Length + events.Length != 0)) return false;
             foreach (PoseLandmark p in pose)
-                if (p == null || !Numbers.Vector(p.position, 3) || !Numbers.Confidence(p.visibility)) return false;
+                if (p == null || !Numbers.Vector(p.position, 2) || (int)p.state < 0 || (int)p.state > 3) return false;
             var names = new HashSet<string>();
             foreach (MotionSignal s in motion_signals)
-                if (s == null || string.IsNullOrEmpty(s.name) || !names.Add(s.name)
-                    || !Numbers.Confidence(s.confidence)) return false;
+                if (s == null || string.IsNullOrEmpty(s.name) || !names.Add(s.name)) return false;
+            long lastEventId = -1;
+            foreach (MotionEvent e in events)
+            {
+                if (e == null || e.id <= lastEventId || !Numbers.Finite(e.strength) || e.strength < 0
+                    || !Numbers.Finite(e.time) || e.time < 0
+                    || !((e.type == "pull" && (e.side == "left" || e.side == "right"))
+                        || (e.type == "jump" && e.side == ""))) return false;
+                lastEventId = e.id;
+            }
             return face_bbox.Length == 0 || (face_bbox[2] >= 0 && face_bbox[3] >= 0);
         }
 
@@ -63,18 +81,36 @@ namespace IPCV.Bridge
             signal = null;
             return false;
         }
+
+        public bool TryGetJoint(PoseJoint joint, out PoseLandmark landmark)
+        {
+            int index = (int)joint;
+            landmark = null;
+            if (!tracked || pose == null || index < 0 || index >= pose.Length) return false;
+            PoseLandmark point = pose[index];
+            if (point == null || (point.state != JointState.Tracked && point.state != JointState.Predicted)) return false;
+            landmark = point;
+            return true;
+        }
     }
 
     [Serializable]
-    public sealed class PoseLandmark { public double[] position; public double visibility; }
+    public sealed class PoseLandmark { public double[] position; public JointState state; }
 
     [Serializable]
-    public sealed class MotionSignal { public string name; public bool active; public double confidence; }
+    public sealed class MotionSignal { public string name; public bool active; }
+
+    [Serializable]
+    public sealed class MotionEvent
+    {
+        public long id;
+        public string type, side;
+        public double strength, time;
+    }
 
     internal static class Numbers
     {
         public static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
-        public static bool Confidence(double v) => Finite(v) && v >= 0 && v <= 1;
         public static bool Vector(double[] v, int size)
         {
             if (v == null || v.Length != size) return false;

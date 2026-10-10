@@ -1,6 +1,7 @@
 """The format of the tracking data sent to Unity."""
 
 from dataclasses import asdict, dataclass
+from enum import IntEnum
 import json
 import math
 import string
@@ -9,17 +10,48 @@ from typing import Iterable
 MAX_PACKET_BYTES = 16_384
 
 
+class Joint(IntEnum):
+    NOSE = 0
+    LEFT_SHOULDER = 1
+    RIGHT_SHOULDER = 2
+    LEFT_ELBOW = 3
+    RIGHT_ELBOW = 4
+    LEFT_WRIST = 5
+    RIGHT_WRIST = 6
+    LEFT_HIP = 7
+    RIGHT_HIP = 8
+    LEFT_KNEE = 9
+    RIGHT_KNEE = 10
+    LEFT_ANKLE = 11
+    RIGHT_ANKLE = 12
+
+
+class JointState(IntEnum):
+    LOST = 0
+    ACQUIRING = 1
+    PREDICTED = 2
+    TRACKED = 3
+
+
 @dataclass(frozen=True)
 class Landmark:
-    position: tuple[float, float, float]
-    visibility: float
+    position: tuple[float, float]
+    state: JointState
 
 
 @dataclass(frozen=True)
 class MotionSignal:
     name: str
     active: bool
-    confidence: float
+
+
+@dataclass(frozen=True)
+class MotionEvent:
+    id: int
+    type: str
+    side: str
+    strength: float
+    time: float
 
 
 @dataclass(frozen=True)
@@ -31,11 +63,7 @@ class PlayerState:
     head_rotation_deg: tuple[float, ...] = ()
     world_position_m: tuple[float, ...] = ()
     motion_signals: tuple[MotionSignal, ...] = ()
-
-
-def pose_from_mediapipe(landmarks: Iterable) -> tuple[Landmark, ...]:
-    """Converts MediaPipe landmarks, keeping all 33 in order."""
-    return tuple(Landmark((p.x, p.y, p.z), p.visibility) for p in landmarks)
+    events: tuple[MotionEvent, ...] = ()
 
 
 def valid_session_id(value: str) -> bool:
@@ -62,13 +90,14 @@ def validate_players(players: tuple[PlayerState, ...]) -> None:
         ids.add(p.id)
         if type(p.tracked) is not bool:
             raise ValueError("tracked must be a boolean")
-        if not p.tracked and any((p.pose, p.face_bbox, p.head_rotation_deg, p.world_position_m, p.motion_signals)):
+        if not p.tracked and any((p.pose, p.face_bbox, p.head_rotation_deg, p.world_position_m, p.motion_signals, p.events)):
             raise ValueError("Untracked players must have empty tracking data")
-        if len(p.pose) not in (0, 33):
-            raise ValueError("pose must contain zero or 33 landmarks")
+        if len(p.pose) not in (0, len(Joint)):
+            raise ValueError("pose must contain zero or 13 landmarks")
         for point in p.pose:
-            if not finite_vector(point.position, 3) or not finite_vector((point.visibility,), 1) or not 0 <= point.visibility <= 1:
-                raise ValueError("Landmarks need three finite coordinates and visibility 0..1")
+            if (not finite_vector(point.position, 2) or not isinstance(point.state, int)
+                    or isinstance(point.state, bool) or not 0 <= point.state <= 3):
+                raise ValueError("Landmarks need two finite coordinates and a joint state 0..3")
         for name, values, size in (
             ("face_bbox", p.face_bbox, 4),
             ("head_rotation_deg", p.head_rotation_deg, 3),
@@ -83,8 +112,18 @@ def validate_players(players: tuple[PlayerState, ...]) -> None:
             if not isinstance(signal.name, str) or not signal.name or signal.name in names:
                 raise ValueError("Motion signal names must be nonempty and unique per player")
             names.add(signal.name)
-            if type(signal.active) is not bool or not finite_vector((signal.confidence,), 1) or not 0 <= signal.confidence <= 1:
-                raise ValueError("Motion signals need boolean active and confidence 0..1")
+            if type(signal.active) is not bool:
+                raise ValueError("Motion signals need boolean active")
+        last_event_id = -1
+        for event in p.events:
+            if type(event.id) is not int or not last_event_id < event.id <= 2**63 - 1:
+                raise ValueError("Event IDs must be nonnegative, increasing and fit a C# long")
+            last_event_id = event.id
+            if not ((event.type == "pull" and event.side in ("left", "right"))
+                    or (event.type == "jump" and event.side == "")):
+                raise ValueError("Events must be left/right pulls or jumps without a side")
+            if not finite_vector((event.strength, event.time), 2) or event.strength < 0 or event.time < 0:
+                raise ValueError("Event strength and time must be finite and nonnegative")
 
 
 def encode_frame(players: Iterable[PlayerState], *, session_id: str, sequence: int,

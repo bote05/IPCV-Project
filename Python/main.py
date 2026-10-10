@@ -64,7 +64,7 @@ def run_camera(sender: UdpSender, processor, camera_index: int, fps: float) -> N
                 raise RuntimeError("Webcam stopped returning frames")
             captured = time.perf_counter()
             try:
-                result = processor(frame)  # Normal BGR image, not mirrored.
+                result = processor(frame, captured)  # Normal BGR image and capture time in seconds.
                 if not isinstance(result, TrackingResult):
                     raise TypeError("Processor must return bridge.pipeline.TrackingResult")
                 sender.send(result.players, captured_time_s=captured)
@@ -94,7 +94,7 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--demo", action="store_true", help="Synthetic two-player data and placeholder JPEGs")
     mode.add_argument("--webcam", action="store_true", help="Run the team's frame processor")
-    parser.add_argument("--processor", help="Python module:function that takes BGR frame and returns TrackingResult")
+    parser.add_argument("--processor", help="Python module:function taking (BGR frame, capture time) and returning TrackingResult")
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--port", type=int, default=5005)
     parser.add_argument("--face-port", type=int, default=5006)

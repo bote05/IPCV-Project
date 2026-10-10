@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -29,7 +30,9 @@ public sealed class BridgePlayModeTests
         TrackingFrame f = Fixture();
         Assert.That(f.IsValid(), Is.True);
         Assert.That(f.players.Length, Is.EqualTo(2));
-        Assert.That(f.players[0].pose.Length, Is.EqualTo(33));
+        Assert.That(f.players[0].pose.Length, Is.EqualTo(13));
+        Assert.That(f.players[0].pose[0].position, Is.EqualTo(new double[] { 0.3, 0.2 }));
+        Assert.That(f.players[0].pose[0].state, Is.EqualTo(JointState.Tracked));
         Assert.That(f.players[1].world_position_m, Is.EqualTo(new double[] { 0.4, 0, 2 }));
         Assert.That(f.players[0].head_rotation_deg.Length, Is.EqualTo(3));
         Assert.That(f.players[0].motion_signals[0].name, Is.EqualTo("left_reach"));
@@ -37,6 +40,36 @@ public sealed class BridgePlayModeTests
         f.players[0].pose[0].position[0] = double.NaN;
         Assert.That(f.IsValid(), Is.False);
     }
+
+    [Test]
+    public void JointStatesAndEventValidation()
+    {
+        PlayerState p = Fixture().players[0];
+        foreach (JointState state in new[] { JointState.Lost, JointState.Acquiring, JointState.Predicted, JointState.Tracked })
+        {
+            p.pose[(int)PoseJoint.LeftWrist].state = state;
+            Assert.That(p.IsValid(), Is.True);
+            Assert.That(p.TryGetJoint(PoseJoint.LeftWrist, out _),
+                Is.EqualTo(state == JointState.Predicted || state == JointState.Tracked));
+        }
+        p.pose[0].state = (JointState)4;
+        Assert.That(p.IsValid(), Is.False);
+        p = Fixture().players[0];
+        p.pose = new PoseLandmark[33];
+        Assert.That(p.IsValid(), Is.False);
+        p = Fixture().players[0];
+        p.events = new[] { Event(0), Event(0) };
+        Assert.That(p.IsValid(), Is.False, "duplicate event ids");
+        p.events = new[] { Event(1), Event(0) };
+        Assert.That(p.IsValid(), Is.False, "events must be in id order");
+        p.events = new[] { Event(0) };
+        Assert.That(p.IsValid(), Is.True);
+        p.events[0].strength = double.NaN;
+        Assert.That(p.IsValid(), Is.False);
+    }
+
+    private static MotionEvent Event(long id) =>
+        new MotionEvent { id = id, type = "pull", side = "left", strength = 0.7, time = 1000.1 };
 
     [Test]
     public void StreamOrderingExpiryAndSessionReset()
@@ -98,6 +131,45 @@ public sealed class BridgePlayModeTests
         double deadline = Now() + 3;
         while (!condition() && Now() < deadline) yield return null;
         Assert.That(condition(), Is.True, "Timed out waiting for a bridge update");
+    }
+
+    [UnityTest]
+    public IEnumerator MotionEventsFireOncePerPlayerAndResetOnNewSession()
+    {
+        CreateReceiver();
+        var handled = new List<string>();
+        int mainThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
+        receiver.MotionReceived += (id, motion) =>
+        {
+            Assert.That(System.Threading.Thread.CurrentThread.ManagedThreadId, Is.EqualTo(mainThread));
+            handled.Add(id + ":" + motion.id);
+        };
+        TrackingFrame f = Fixture();
+        f.players[0].events = new[] { Event(0) };
+        f.players[1].events = new[] { Event(0) };
+        Send(f);
+        yield return Until(() => handled.Count == 2);
+        CollectionAssert.AreEqual(new[] { "1:0", "2:0" }, handled);
+
+        f.sequence = 1; Send(f);
+        yield return Until(() => receiver.CurrentFrame?.sequence == 1);
+        Assert.That(handled.Count, Is.EqualTo(2), "held events must not fire again");
+        TrackingFrame lost = Fixture(); lost.sequence = 2; lost.players = new PlayerState[0]; Send(lost);
+        yield return Until(() => receiver.CurrentFrame?.sequence == 2);
+        f.sequence = 3; Send(f);
+        yield return Until(() => receiver.CurrentFrame?.sequence == 3);
+        Assert.That(handled.Count, Is.EqualTo(2), "loss must not reset event ids");
+
+        f.sequence = 4; f.players[0].events = new[] { Event(0), Event(1), Event(2) }; Send(f);
+        yield return Until(() => handled.Count == 4);
+        CollectionAssert.AreEqual(new[] { "1:0", "2:0", "1:1", "1:2" }, handled);
+        f.sequence = 3; f.players[0].events = new[] { Event(3) }; Send(f);
+        yield return Until(() => receiver.RejectedFrames > 0);
+        Assert.That(handled.Count, Is.EqualTo(4), "rejected frames must not publish events");
+
+        f.session_id = Session2; f.sequence = 0; f.players[0].events = new[] { Event(0) }; Send(f);
+        yield return Until(() => handled.Count == 6);
+        CollectionAssert.AreEqual(new[] { "1:0", "2:0", "1:1", "1:2", "1:0", "2:0" }, handled);
     }
 
     [UnityTest]

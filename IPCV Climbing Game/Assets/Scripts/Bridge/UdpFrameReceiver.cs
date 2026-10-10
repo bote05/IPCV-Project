@@ -13,8 +13,11 @@ namespace IPCV.Bridge
         private UdpInbox inbox;
         private TrackingFrameStream stream;
         private TrackingFrame lastPublished;
+        private string eventSession;
+        private readonly long[] lastEventIds = { -1, -1, -1 };
 
         public event Action<TrackingFrame> FrameReceived;
+        public event Action<int, MotionEvent> MotionReceived;
         public event Action TrackingLost;
         public int Port => port;
         public TrackingFrame CurrentFrame => stream?.GetCurrent(UdpInbox.Now());
@@ -70,18 +73,35 @@ namespace IPCV.Bridge
             }
             foreach (UdpInbox.Packet packet in inbox.Drain())
             {
+                TrackingFrame frame;
                 try
                 {
-                    stream.TryAccept(JsonUtility.FromJson<TrackingFrame>(Utf8.GetString(packet.bytes)),
-                        packet.receiptSeconds, UdpInbox.Now());
+                    frame = JsonUtility.FromJson<TrackingFrame>(Utf8.GetString(packet.bytes));
                 }
-                catch (ArgumentException) { InvalidPackets++; }
+                catch (ArgumentException) { InvalidPackets++; continue; }
+                if (stream.TryAccept(frame, packet.receiptSeconds, UdpInbox.Now())) PublishMotionEvents(frame);
             }
             TrackingFrame current = CurrentFrame;
             if (ReferenceEquals(current, lastPublished)) return;
             lastPublished = current;
             if (current == null) TrackingLost?.Invoke();
             else FrameReceived?.Invoke(current);
+        }
+
+        private void PublishMotionEvents(TrackingFrame frame)
+        {
+            if (eventSession != frame.session_id)
+            {
+                eventSession = frame.session_id;
+                lastEventIds[1] = lastEventIds[2] = -1;
+            }
+            foreach (PlayerState player in frame.players)
+                foreach (MotionEvent motion in player.events)
+                    if (motion.id > lastEventIds[player.id])
+                    {
+                        lastEventIds[player.id] = motion.id;
+                        MotionReceived?.Invoke(player.id, motion);
+                    }
         }
 
         private void OnDisable()
