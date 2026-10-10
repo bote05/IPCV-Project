@@ -66,15 +66,9 @@ messages = [p.to_dict((frame.shape[1], frame.shape[0]), mirror=True) for p in pl
 ```
 
 Detection and tracking are separate calls so player identities can be assigned in between. The
-`ids` contract:
-- one entry per pose, in the order `detect` returned them
-- `None` discards a pose (a spectator, a false detection)
-- no id twice in one frame; a mismatch raises `ValueError`
-- a player id with no pose for 1 s is dropped; when it comes back, its filters restart cleanly
-
+interface for that (input, the `ids` contract, what comes back) is in [Identity/IDENTITY.md](../Identity/IDENTITY.md).
 Without `ids`, the tracker links detections frame to frame itself, which is enough for the demo
-and for evaluation. To match poses to players, the identity module can use the previous frame's
-`PlayerPose` list, whose joints are smoothed and predicted through gaps.
+and for evaluation.
 
 `to_dict` gives one JSON-ready object per player. Image positions are already normalised to 0..1,
 so the bridge does not need the image size. The output uses lists rather than maps so Unity's
