@@ -21,7 +21,6 @@ public sealed class BridgePlayModeTests
     private UdpFaceReceiver faces;
     private BridgeMetrics metrics;
     private int port, facePort;
-    private static double Now() => BridgeClock.Now();
     private static TrackingFrame Fixture() => JsonUtility.FromJson<TrackingFrame>(Resources.Load<TextAsset>("python_frame").text);
 
     [Test]
@@ -117,7 +116,7 @@ public sealed class BridgePlayModeTests
     private void Send(TrackingFrame f)
     {
         f.clock = Environment.OSVersion.Platform == PlatformID.Win32NT ? "qpc" : "local";
-        f.sent_time_s = Now(); f.captured_time_s = f.sent_time_s - 0.004; f.processing_ms = 4;
+        f.sent_time_s = BridgeClock.Now(); f.captured_time_s = f.sent_time_s - 0.004; f.processing_ms = 4;
         SendBytes(Encoding.UTF8.GetBytes(JsonUtility.ToJson(f)), port);
     }
 
@@ -128,8 +127,8 @@ public sealed class BridgePlayModeTests
 
     private static IEnumerator Until(Func<bool> condition)
     {
-        double deadline = Now() + 3;
-        while (!condition() && Now() < deadline) yield return null;
+        double deadline = BridgeClock.Now() + 3;
+        while (!condition() && BridgeClock.Now() < deadline) yield return null;
         Assert.That(condition(), Is.True, "Timed out waiting for a bridge update");
     }
 
@@ -234,8 +233,8 @@ public sealed class BridgePlayModeTests
             {
                 yield return Until(() => receiver.TryGetPlayer(2, out _));
                 yield return Until(() => faces.TryGetTexture(2, out _));
-                double deadline = Now() + 15;
-                while (!process.HasExited && Now() < deadline) yield return null;
+                double deadline = BridgeClock.Now() + 15;
+                while (!process.HasExited && BridgeClock.Now() < deadline) yield return null;
                 Assert.That(process.HasExited, Is.True);
                 Assert.That(process.ExitCode, Is.EqualTo(0));
                 Assert.That(receiver.AcceptedFrames, Is.GreaterThan(200));
@@ -246,7 +245,7 @@ public sealed class BridgePlayModeTests
             finally
             {
                 if (!process.HasExited) { process.Kill(); process.WaitForExit(); }
-                Debug.Log($"Python exit {process.ExitCode}; received {receiver.ReceivedPackets}; accepted {receiver.AcceptedFrames}; rejected {receiver.RejectedFrames}; invalid {receiver.InvalidPackets}; Unity clock {Now():F6}");
+                Debug.Log($"Python exit {process.ExitCode}; received {receiver.ReceivedPackets}; accepted {receiver.AcceptedFrames}; rejected {receiver.RejectedFrames}; invalid {receiver.InvalidPackets}; Unity clock {BridgeClock.Now():F6}");
                 Debug.Log(process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd());
             }
         }

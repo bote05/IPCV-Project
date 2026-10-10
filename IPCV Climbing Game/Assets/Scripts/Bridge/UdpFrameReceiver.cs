@@ -20,7 +20,7 @@ namespace IPCV.Bridge
         public event Action<int, MotionEvent> MotionReceived;
         public event Action TrackingLost;
         public int Port => port;
-        public TrackingFrame CurrentFrame => stream?.GetCurrent(UdpInbox.Now());
+        public TrackingFrame CurrentFrame => stream?.GetCurrent(BridgeClock.Now());
         public bool HasFreshFrame => CurrentFrame != null;
         public long ReceivedPackets => inbox?.ReceivedPackets ?? 0;
         public long QueueDrops => inbox?.Drops ?? 0;
@@ -79,7 +79,7 @@ namespace IPCV.Bridge
                     frame = JsonUtility.FromJson<TrackingFrame>(Utf8.GetString(packet.bytes));
                 }
                 catch (ArgumentException) { InvalidPackets++; continue; }
-                if (stream.TryAccept(frame, packet.receiptSeconds, UdpInbox.Now())) PublishMotionEvents(frame);
+                if (stream.TryAccept(frame, packet.receiptSeconds, BridgeClock.Now())) PublishMotionEvents(frame);
             }
             TrackingFrame current = CurrentFrame;
             if (ReferenceEquals(current, lastPublished)) return;

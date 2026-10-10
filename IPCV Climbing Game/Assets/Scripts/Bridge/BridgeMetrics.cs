@@ -21,18 +21,18 @@ namespace IPCV.Bridge
         {
             receiver = GetComponent<UdpFrameReceiver>();
             receiver.FrameReceived += OnFrame;
-            windowStarted = UdpInbox.Now();
+            windowStarted = BridgeClock.Now();
             unityFrames = trackingFrames = 0;
         }
 
         private void Update()
         {
             unityFrames++;
-            double elapsed = UdpInbox.Now() - windowStarted;
+            double elapsed = BridgeClock.Now() - windowStarted;
             if (elapsed < 1) return;
             UnityFps = unityFrames / elapsed;
             TrackingFps = trackingFrames / elapsed;
-            windowStarted = UdpInbox.Now();
+            windowStarted = BridgeClock.Now();
             unityFrames = trackingFrames = 0;
             csv?.Flush();
         }
@@ -58,7 +58,7 @@ namespace IPCV.Bridge
             if (csv == null) return;
             csv.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "{0:F6},{1},{2},{3:F6},{4},{5:F6},{6},{7:F3},{8:F3},{9},{10},{11}",
-                UdpInbox.Now(), frame.session_id, frame.sequence, frame.processing_ms,
+                BridgeClock.Now(), frame.session_id, frame.sequence, frame.processing_ms,
                 Metric(receiver.EncodeAndUdpMs), receiver.ReceiveToApplyMs, Metric(receiver.CaptureToApplyMs),
                 TrackingFps, UnityFps, receiver.SequenceGaps, receiver.QueueDrops, receiver.InvalidPackets));
         }

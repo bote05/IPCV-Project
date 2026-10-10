@@ -43,7 +43,7 @@ namespace IPCV.Bridge
             Crop crop = id >= 1 && id <= 2 ? crops[id] : null;
             TrackingFrame frame = tracking.CurrentFrame;
             if (crop != null && crop.valid && frame != null && crop.session == frame.session_id
-                && UdpInbox.Now() - crop.receipt <= staleAfterSeconds
+                && BridgeClock.Now() - crop.receipt <= staleAfterSeconds
                 && tracking.TryGetPlayer(id, out PlayerState player) && player.face_bbox.Length == 4)
             { texture = crop.texture; return true; }
             texture = null;
@@ -65,7 +65,7 @@ namespace IPCV.Bridge
                 byte[] b = packet.bytes;
                 TrackingFrame frame = tracking.CurrentFrame;
                 if (b.Length <= HeaderSize || b[0] != 'I' || b[1] != 'P' || b[2] != 'C' || b[3] != 'F'
-                    || frame == null || UdpInbox.Now() - packet.receiptSeconds > staleAfterSeconds)
+                    || frame == null || BridgeClock.Now() - packet.receiptSeconds > staleAfterSeconds)
                 { RejectedCrops++; continue; }
                 int id = b[36];
                 string session = Encoding.ASCII.GetString(b, 4, 32);

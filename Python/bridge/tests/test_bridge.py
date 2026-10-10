@@ -152,8 +152,8 @@ class SenderTests(unittest.TestCase):
                 sender.send([PlayerState(7, True)])
             self.assertEqual(sender.sequence, 1)
 
-    def test_destination_validation(self):
-        for args in ({"host": "192.168.1.2"}, {"port": 0}, {"port": 5006}, {"face_port": 65536}):
+    def test_port_validation(self):
+        for args in ({"port": 0}, {"port": 5006}, {"face_port": 65536}):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 UdpSender(**args)
 

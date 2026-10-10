@@ -20,7 +20,6 @@ namespace IPCV.Bridge
         public long ReceivedPackets => Interlocked.Read(ref received);
         public long Drops => Interlocked.Read(ref drops);
         public string Error => Volatile.Read(ref error);
-        public static double Now() => BridgeClock.Now();
 
         public UdpInbox(int port, int maxBytes, int capacity)
         {
@@ -49,7 +48,7 @@ namespace IPCV.Bridge
                     byte[] bytes = client.Receive(ref source);
                     Interlocked.Increment(ref received);
                     if (bytes.Length == 0 || bytes.Length > maxBytes) { Interlocked.Increment(ref drops); continue; }
-                    var packet = new Packet { bytes = bytes, receiptSeconds = Now() };
+                    var packet = new Packet { bytes = bytes, receiptSeconds = BridgeClock.Now() };
                     lock (queue)
                     {
                         if (queue.Count == capacity) { queue.Dequeue(); Interlocked.Increment(ref drops); }

@@ -1,6 +1,5 @@
 """Sends tracking data and face crops to Unity over UDP."""
 
-import ipaddress
 import os
 import socket
 import time
@@ -12,14 +11,11 @@ from .protocol import PlayerState, encode_frame
 
 
 class UdpSender:
-    def __init__(self, host: str = "127.0.0.1", port: int = 5005, face_port: int = 5006):
-        address = ipaddress.IPv4Address(host)
-        if not address.is_loopback:
-            raise ValueError("Python and Unity must run on the same computer")
+    def __init__(self, port: int = 5005, face_port: int = 5006):
         if any(type(p) is not int or not 1 <= p <= 65535 for p in (port, face_port)) or port == face_port:
             raise ValueError("Tracking and face ports must be distinct, in 1..65535")
-        self._destination = (str(address), port)
-        self._face_destination = (str(address), face_port)
+        self._destination = ("127.0.0.1", port)
+        self._face_destination = ("127.0.0.1", face_port)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setblocking(False)
         self.session_id = uuid.uuid4().hex
