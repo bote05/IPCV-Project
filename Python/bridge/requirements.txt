@@ -1,0 +1,3 @@
+# Only needed for the webcam. The demo works without these.
+opencv-python==4.12.0.88
+numpy==2.2.6
