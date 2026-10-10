@@ -1,7 +1,7 @@
 """Session recordings: the raw detections and timing of every frame, stored as JSON lines.
 
 Recording the detector output instead of the filtered result means any filter or motion setting can
-be evaluated offline on exactly the same input (see evaluate.py).
+be evaluated offline on exactly the same input (see the evaluation package).
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .detector import RawPose
-from .skeleton import JOINT_NAMES
+from ..detector import RawPose
+from ..skeleton import JOINT_NAMES
 
 FORMAT = "pose-recording/1"
 

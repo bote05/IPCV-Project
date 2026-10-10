@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.signal import butter, filtfilt
 
-from .filtering import JointState
-from .motion import MotionAnalyzer, MotionConfig, MotionEvent
+from ..filtering import JointState
+from ..motion import MotionAnalyzer, MotionConfig, MotionEvent
 
 MIN_REFERENCE_RUN = 12  # frames; shorter runs of detections are too short to filter forward-backward
 

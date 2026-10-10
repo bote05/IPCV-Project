@@ -1,8 +1,8 @@
 """Live pose tracking demo and session recorder.
 
-    python -m Pose.demo                                  # webcam 0
-    python -m Pose.demo --source clip.mp4                # video file, every frame processed
-    python -m Pose.demo --record recordings/s1.jsonl --save-video recordings/s1.mp4
+    python -m Pose.tools.demo                                  # webcam 0
+    python -m Pose.tools.demo --source clip.mp4                # video file, every frame processed
+    python -m Pose.tools.demo --record recordings/s1.jsonl --save-video recordings/s1.mp4
 
 Keys: q quit, r toggle raw detections, o simulate arm occlusion, d simulate detector dropout.
 """
@@ -18,10 +18,10 @@ from dataclasses import replace
 import cv2
 import numpy as np
 
-from .detector import MODEL_VARIANTS, PoseDetector, RawPose
-from .recording import FrameRecord, RecordingWriter
-from .skeleton import ELBOWS, WRISTS, Joint
-from .tracker import PlayerPose, PoseTracker
+from ..detector import MODEL_VARIANTS, PoseDetector, RawPose
+from ..evaluation.recording import FrameRecord, RecordingWriter
+from ..skeleton import ELBOWS, WRISTS, Joint
+from ..tracker import PlayerPose, PoseTracker
 from .visualize import EventFlash, SignalPlot, draw_player, draw_raw, draw_text, player_color
 
 OCCLUDED_JOINTS = [*ELBOWS, *WRISTS]

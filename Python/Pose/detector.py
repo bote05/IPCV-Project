@@ -60,7 +60,7 @@ class PoseDetector:
     ):
         path = model_path(model) if model in MODEL_VARIANTS else Path(model)
         if not path.is_file():
-            raise FileNotFoundError(f"{path} not found, run `python -m Pose.download_models` first")
+            raise FileNotFoundError(f"{path} not found, run `python -m Pose.tools.download_models` first")
         options = PoseLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(path)),
             running_mode=RunningMode.VIDEO,

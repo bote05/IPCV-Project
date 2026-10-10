@@ -1,6 +1,6 @@
-"""Click ground-truth joint positions on sampled video frames for `evaluate.py accuracy`.
+"""Click ground-truth joint positions on sampled video frames for `python -m Pose.evaluation accuracy`.
 
-    python -m Pose.annotate recordings/s1.mp4 recordings/s1_gt.json --frames 20
+    python -m Pose.tools.annotate recordings/s1.mp4 recordings/s1_gt.json --frames 20
 
 Click each requested joint of a person. Keys: s skip a joint that is not visible, u undo,
 n start the next person, enter/space next frame, q save and quit. Existing annotations are kept,
@@ -19,7 +19,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .skeleton import JOINT_NAMES
+from ..skeleton import JOINT_NAMES
 from .visualize import PLAYER_COLORS, draw_text
 
 WINDOW = "annotate"

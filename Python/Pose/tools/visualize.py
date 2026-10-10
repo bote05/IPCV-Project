@@ -7,11 +7,11 @@ from collections import deque
 import cv2
 import numpy as np
 
-from .detector import RawPose
-from .filtering import JointState
-from .metrics import contiguous_runs
-from .skeleton import BONES, HIPS, NUM_JOINTS, SIDES, WRISTS, Joint
-from .tracker import PlayerPose
+from ..detector import RawPose
+from ..evaluation.metrics import contiguous_runs
+from ..filtering import JointState
+from ..skeleton import BONES, HIPS, NUM_JOINTS, SIDES, WRISTS, Joint
+from ..tracker import PlayerPose
 
 PLAYER_COLORS = ((255, 160, 40), (60, 200, 255), (120, 255, 120), (255, 90, 200))
 STATE_COLORS = {

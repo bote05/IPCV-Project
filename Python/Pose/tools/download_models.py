@@ -1,7 +1,7 @@
 """Download the MediaPipe Pose Landmarker models into Models/.
 
-    python -m Pose.download_models            # full only
-    python -m Pose.download_models lite heavy
+    python -m Pose.tools.download_models            # full only
+    python -m Pose.tools.download_models lite heavy
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import urllib.request
 
-from .detector import MODEL_VARIANTS, MODELS_DIR, model_path
+from ..detector import MODEL_VARIANTS, MODELS_DIR, model_path
 
 URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_{0}/float16/1/pose_landmarker_{0}.task"
 

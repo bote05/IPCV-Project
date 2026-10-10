@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 
-from Pose.evaluate import replay
+from Pose.evaluation.metrics import Track, contiguous_runs, lag, match_events
+from Pose.evaluation.recording import FrameRecord, RecordingWriter, load_recording
+from Pose.evaluation.replay import replay
 from Pose.filtering import JointState
-from Pose.metrics import Track, contiguous_runs, lag, match_events
 from Pose.motion import MotionEvent
-from Pose.recording import FrameRecord, RecordingWriter, load_recording
 from Pose.skeleton import NUM_JOINTS
 from Pose.tracker import TrackerConfig
 

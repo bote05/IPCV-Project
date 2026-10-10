@@ -22,7 +22,7 @@ py -3.12 -m venv .venv
 .venv\Scripts\activate
 pip install -r Python/Pose/requirements.txt
 cd Python
-python -m Pose.download_models          # Models/pose_landmarker_full.task (add lite heavy for comparisons)
+python -m Pose.tools.download_models    # Models/pose_landmarker_full.task (add lite heavy for comparisons)
 python -m pytest Pose/tests
 ```
 
@@ -31,9 +31,9 @@ All commands below run from `Python/`.
 ## Demo
 
 ```
-python -m Pose.demo                                   # webcam 0
-python -m Pose.demo --source clip.mp4                 # video file, every frame processed
-python -m Pose.demo --mirror --record ../recordings/s1.jsonl --save-video ../recordings/s1.mp4
+python -m Pose.tools.demo                             # webcam 0
+python -m Pose.tools.demo --source clip.mp4           # video file, every frame processed
+python -m Pose.tools.demo --mirror --record ../recordings/s1.jsonl --save-video ../recordings/s1.mp4
 ```
 
 `--mirror` only flips what is shown. Tracking, recordings and saved video always use the camera
@@ -126,7 +126,7 @@ cutoff is `min_cutoff` = 1 Hz (strong jitter suppression). It rises by `beta` = 
 length/s of speed, so lag stays small during fast movement. Speed is measured in torso lengths, so
 the same parameters behave the same at any distance from the camera. Velocities are the derivative
 of the filtered positions, low-passed at 4 Hz. The defaults should be confirmed with
-`evaluate sweep` on real sessions.
+`python -m Pose.evaluation sweep` on real sessions.
 
 **Control signals** (`motion.py`) are expressed in a body frame: origin at the shoulder midpoint,
 y up, unit = torso length. A player's hands give the same values wherever they stand and however
@@ -144,27 +144,27 @@ an extrapolated joint can never trigger an action.
 
 ## Evaluation
 
-Record sessions with `demo --record` (and `--save-video` for annotation), then evaluate offline.
+Record sessions with the demo (`--record`, plus `--save-video` for annotation), then evaluate offline.
 Every command replays the recorded detections through the tracker, so any setting can be compared
 on identical input in a few seconds.
 
 | report item | command |
 |---|---|
-| keypoint detection rate | `evaluate summary` (column `detected`) |
-| keypoint error | `annotate` on sampled frames, then `evaluate accuracy` (pixel error, % torso, PCK@0.2) |
-| jitter, still and moving | `evaluate summary`: RMS deviation while standing still; RMS acceleration while moving; raw vs filtered |
-| movement-to-signal delay | `evaluate summary`: filter lag and event delay against a zero-phase reference, plus detection time |
-| missing-keypoint handling | `evaluate dropout` (hold vs damped vs constant-velocity prediction; error, availability, recovery time, false events); demo keys `o`/`d` |
-| module latency and rate | `evaluate summary`: detection and tracking ms (mean, p95), frame rate and 5th percentile |
-| lighting | `evaluate summary rec1 rec2 ...` prints a comparison across recordings with their mean brightness |
-| smoothness/responsiveness trade-off | `evaluate sweep` (`--plots` draws the jitter-lag curve) |
+| keypoint detection rate | `evaluation summary` (column `detected`) |
+| keypoint error | `annotate` on sampled frames, then `evaluation accuracy` (pixel error, % torso, PCK@0.2) |
+| jitter, still and moving | `evaluation summary`: RMS deviation while standing still; RMS acceleration while moving; raw vs filtered |
+| movement-to-signal delay | `evaluation summary`: filter lag and event delay against a zero-phase reference, plus detection time |
+| missing-keypoint handling | `evaluation dropout` (hold vs damped vs constant-velocity prediction; error, availability, recovery time, false events); demo keys `o`/`d` |
+| module latency and rate | `evaluation summary`: detection and tracking ms (mean, p95), frame rate and 5th percentile |
+| lighting | `evaluation summary rec1 rec2 ...` prints a comparison across recordings with their mean brightness |
+| smoothness/responsiveness trade-off | `evaluation sweep` (`--plots` draws the jitter-lag curve) |
 
 ```
-python -m Pose.evaluate summary ../recordings/*.jsonl --plots ../figures --json ../figures/summary.json
-python -m Pose.evaluate sweep ../recordings/s1.jsonl --plots ../figures
-python -m Pose.evaluate dropout ../recordings/s1.jsonl --joints arms --plots ../figures
-python -m Pose.annotate ../recordings/s1.mp4 ../recordings/s1_gt.json --frames 20
-python -m Pose.evaluate accuracy ../recordings/s1.jsonl ../recordings/s1_gt.json
+python -m Pose.evaluation summary ../recordings/*.jsonl --plots ../figures --json ../figures/summary.json
+python -m Pose.evaluation sweep ../recordings/s1.jsonl --plots ../figures
+python -m Pose.evaluation dropout ../recordings/s1.jsonl --joints arms --plots ../figures
+python -m Pose.tools.annotate ../recordings/s1.mp4 ../recordings/s1_gt.json --frames 20
+python -m Pose.evaluation accuracy ../recordings/s1.jsonl ../recordings/s1_gt.json
 ```
 
 There is no ground truth during live play. The **reference** is a zero-phase (forward-backward)
@@ -191,16 +191,28 @@ leaves and re-enters.
 
 ## Files
 
-| file | contents |
-|---|---|
-| `skeleton.py` | selected joints, MediaPipe indices, bones |
-| `detector.py` | `PoseDetector`, `RawPose` |
-| `filtering.py` | `OneEuroFilter`, `KeypointFilter`, `JointState`, `FilterConfig` |
-| `motion.py` | `MotionAnalyzer`, body frame, signals, events |
-| `tracker.py` | `PoseTracker`, `PlayerPose.to_dict` |
-| `recording.py` | session recording format (JSON lines) |
-| `metrics.py`, `evaluate.py` | offline evaluation |
-| `annotate.py` | ground-truth annotation tool |
-| `demo.py`, `visualize.py` | live demo and drawing |
-| `download_models.py` | fetches the pinned model files into `Models/` |
-| `tests/` | unit tests on synthetic poses |
+```
+Pose/
+├── __init__.py          public API: PoseDetector, PoseTracker, PlayerPose, configs
+├── skeleton.py          selected joints, MediaPipe indices, bones
+├── detector.py          PoseDetector, RawPose
+├── filtering.py         OneEuroFilter, KeypointFilter, JointState, FilterConfig
+├── motion.py            MotionAnalyzer: body frame, signals, events
+├── tracker.py           PoseTracker, PlayerPose.to_dict
+├── tools/
+│   ├── demo.py          live demo and session recorder
+│   ├── visualize.py     drawing for the demo
+│   ├── annotate.py      ground-truth annotation
+│   └── download_models.py
+├── evaluation/          python -m Pose.evaluation
+│   ├── recording.py     session format (JSON lines)
+│   ├── metrics.py       jitter, lag, detection rate, event matching
+│   ├── replay.py        replays recordings through the tracker
+│   ├── experiments.py   summary, sweep, dropout, accuracy
+│   ├── report.py        tables, figures, JSON
+│   └── __main__.py      command line
+└── tests/               unit tests on synthetic poses
+```
+
+The game only needs the top-level modules; `tools/` and `evaluation/` are for development and the
+report.
