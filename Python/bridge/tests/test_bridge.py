@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from bridge.demo import demo_players
 from bridge.face import encode_face, FACE_HEADER
 from bridge.pipeline import TrackingResult, player_from_pose
-from bridge.protocol import Joint, JointState, Landmark, MotionEvent, MotionSignal, PlayerState, encode_frame
+from bridge.protocol import Joint, JointState, Landmark, MotionEvent, PlayerState, encode_frame
 from bridge.sender import UdpSender
 import main
 
@@ -32,16 +32,18 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(frame["players"][0]["pose"][0], {"position": [0.3, 0.2], "state": 3})
         self.assertEqual(len(frame["players"][0]["head_rotation_deg"]), 3)
         self.assertEqual(frame["players"][1]["world_position_m"], [0.4, 0, 2])
-        self.assertEqual(frame["players"][0]["motion_signals"][0]["name"], "left_reach")
+        self.assertEqual(frame["players"][1]["hand_raised"], [False, True])
 
-    def test_precise_processing_duration(self):
+    def test_capture_and_send_times_are_preserved(self):
         frame = json.loads(self.encode([], captured_time_s=1000.123456, sent_time_s=1000.123789))
-        self.assertAlmostEqual(frame["processing_ms"], 0.333, places=6)
+        self.assertEqual(frame["captured_time_s"], 1000.123456)
+        self.assertEqual(frame["sent_time_s"], 1000.123789)
+        self.assertNotIn("processing_ms", frame)
 
     def test_explicit_loss_and_unknown_data_are_empty(self):
         self.assertEqual(json.loads(self.encode([]))["players"], [])
         p = json.loads(self.encode([PlayerState(1, False)]))["players"][0]
-        for key in ("pose", "face_bbox", "head_rotation_deg", "world_position_m", "motion_signals", "events"):
+        for key in ("pose", "face_bbox", "head_rotation_deg", "world_position_m", "hand_raised", "events"):
             self.assertEqual(p[key], [])
 
     def test_invalid_payloads(self):
@@ -55,8 +57,10 @@ class ProtocolTests(unittest.TestCase):
             [PlayerState(1, True, face_bbox=(0, 0, -1, 1))],
             [PlayerState(1, True, world_position_m=(0, 2))],
             [PlayerState(1, True, head_rotation_deg=(0, float("nan"), 0))],
-            [PlayerState(1, True, motion_signals=(MotionSignal("left_reach", 1),))],
-            [PlayerState(1, True, motion_signals=(MotionSignal("a", True),) * 2)],
+            [PlayerState(1, True, hand_raised=(1, False))],
+            [PlayerState(1, True, hand_raised=(True,))],
+            [PlayerState(1, True, hand_raised=(True, False, True))],
+            [PlayerState(1, False, hand_raised=(False, False))],
         ):
             with self.subTest(players=players), self.assertRaises(ValueError):
                 self.encode(players)
@@ -74,11 +78,15 @@ class ProtocolTests(unittest.TestCase):
     def test_event_contract_and_order(self):
         pull = MotionEvent(0, "pull", "left", 0.7, 1000.0)
         jump = MotionEvent(1, "jump", "", 2.1, 1000.1)
-        frame = json.loads(self.encode([PlayerState(1, True, events=(pull, jump))]))
+        custom = MotionEvent(2, "grab", "both", -0.5, 1000.2)
+        frame = json.loads(self.encode([PlayerState(1, True, events=(pull, jump, custom))]))
         self.assertEqual(frame["players"][0]["events"][0],
                          dict(id=0, type="pull", side="left", strength=0.7, time=1000.0))
+        self.assertEqual(frame["players"][0]["events"][2],
+                         dict(id=2, type="grab", side="both", strength=-0.5, time=1000.2))
         for events in ((pull, pull), (jump, pull), (MotionEvent(-1, "pull", "left", 1, 1),),
-                       (MotionEvent(2**63, "jump", "", 1, 1),), (MotionEvent(0, "pull", "", 1, 1),),
+                       (MotionEvent(2**63, "jump", "", 1, 1),), (MotionEvent(0, "", "", 1, 1),),
+                       (MotionEvent(0, "grab", None, 1, 1),),
                        (MotionEvent(0, "jump", "", float("nan"), 1),)):
             with self.subTest(events=events), self.assertRaises(ValueError):
                 self.encode([PlayerState(1, True, events=events)])
@@ -112,7 +120,7 @@ class SenderTests(unittest.TestCase):
             with UdpSender(port=port, face_port=face_port) as sender:
                 sender.send(demo_players(0), captured_time_s=time.perf_counter() - 0.002)
                 first = json.loads(states.recv(16384))
-                self.assertGreater(first["processing_ms"], 1)
+                self.assertGreater(first["sent_time_s"] - first["captured_time_s"], 0.001)
                 sender.send_face(1, JPEG)
                 crop = faces.recv(60000)
                 self.assertEqual(FACE_HEADER.unpack(crop[:45])[1].decode(), first["session_id"])
@@ -215,7 +223,7 @@ class PoseAdapterTests(unittest.TestCase):
         player = player_from_pose(self.data())
         self.assertTrue(player.tracked)
         self.assertEqual(player.pose[Joint.LEFT_WRIST], Landmark((0.25, 0.75), JointState.PREDICTED))
-        self.assertEqual(player.motion_signals, (MotionSignal("left_reach", True), MotionSignal("right_reach", False)))
+        self.assertEqual(player.hand_raised, (True, False))
         self.assertEqual(player.events, (MotionEvent(0, "pull", "left", 0.8, 10.0),))
         self.assertEqual(player.world_position_m, ())
 

@@ -58,7 +58,7 @@ namespace IPCV.Bridge
             if (csv == null) return;
             csv.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "{0:F6},{1},{2},{3:F6},{4},{5:F6},{6},{7:F3},{8:F3},{9},{10},{11}",
-                BridgeClock.Now(), frame.session_id, frame.sequence, frame.processing_ms,
+                BridgeClock.Now(), frame.session_id, frame.sequence, frame.ProcessingMs,
                 Metric(receiver.EncodeAndUdpMs), receiver.ReceiveToApplyMs, Metric(receiver.CaptureToApplyMs),
                 TrackingFps, UnityFps, receiver.SequenceGaps, receiver.QueueDrops, receiver.InvalidPackets));
         }

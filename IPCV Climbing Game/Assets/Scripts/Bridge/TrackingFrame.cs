@@ -18,8 +18,9 @@ namespace IPCV.Bridge
         public string session_id;
         public long sequence;
         public string clock;
-        public double captured_time_s, sent_time_s, processing_ms;
+        public double captured_time_s, sent_time_s;
         public PlayerState[] players;
+        public double ProcessingMs => (sent_time_s - captured_time_s) * 1000;
 
         public bool IsValid()
         {
@@ -27,8 +28,6 @@ namespace IPCV.Bridge
             if (!Guid.TryParseExact(session_id, "N", out ignored) || sequence < 0
                 || (clock != "qpc" && clock != "local") || !Numbers.Finite(captured_time_s)
                 || !Numbers.Finite(sent_time_s) || captured_time_s <= 0 || sent_time_s < captured_time_s
-                || !Numbers.Finite(processing_ms) || processing_ms < 0
-                || Math.Abs(processing_ms - (sent_time_s - captured_time_s) * 1000) > 0.01
                 || players == null || players.Length > 2) return false;
             int ids = 0;
             foreach (PlayerState p in players)
@@ -47,39 +46,27 @@ namespace IPCV.Bridge
         public bool tracked;
         public PoseLandmark[] pose;
         public double[] face_bbox, head_rotation_deg, world_position_m;
-        public MotionSignal[] motion_signals;
+        public bool[] hand_raised;
         public MotionEvent[] events;
 
         public bool IsValid()
         {
             if ((id != 1 && id != 2) || pose == null || (pose.Length != 0 && pose.Length != 13)
                 || !Numbers.OptionalVector(face_bbox, 4) || !Numbers.OptionalVector(head_rotation_deg, 3)
-                || !Numbers.OptionalVector(world_position_m, 3) || motion_signals == null || events == null) return false;
+                || !Numbers.OptionalVector(world_position_m, 3) || hand_raised == null
+                || (hand_raised.Length != 0 && hand_raised.Length != 2) || events == null) return false;
             if (!tracked && (pose.Length + face_bbox.Length + head_rotation_deg.Length
-                + world_position_m.Length + motion_signals.Length + events.Length != 0)) return false;
+                + world_position_m.Length + hand_raised.Length + events.Length != 0)) return false;
             foreach (PoseLandmark p in pose)
                 if (p == null || !Numbers.Vector(p.position, 2) || (int)p.state < 0 || (int)p.state > 3) return false;
-            var names = new HashSet<string>();
-            foreach (MotionSignal s in motion_signals)
-                if (s == null || string.IsNullOrEmpty(s.name) || !names.Add(s.name)) return false;
             long lastEventId = -1;
             foreach (MotionEvent e in events)
             {
-                if (e == null || e.id <= lastEventId || !Numbers.Finite(e.strength) || e.strength < 0
-                    || !Numbers.Finite(e.time) || e.time < 0
-                    || !((e.type == "pull" && (e.side == "left" || e.side == "right"))
-                        || (e.type == "jump" && e.side == ""))) return false;
+                if (e == null || e.id <= lastEventId || !Numbers.Finite(e.strength)
+                    || !Numbers.Finite(e.time) || string.IsNullOrEmpty(e.type) || e.side == null) return false;
                 lastEventId = e.id;
             }
             return face_bbox.Length == 0 || (face_bbox[2] >= 0 && face_bbox[3] >= 0);
-        }
-
-        public bool TryGetSignal(string name, out MotionSignal signal)
-        {
-            foreach (MotionSignal s in motion_signals)
-                if (s.name == name) { signal = s; return true; }
-            signal = null;
-            return false;
         }
 
         public bool TryGetJoint(PoseJoint joint, out PoseLandmark landmark)
@@ -96,9 +83,6 @@ namespace IPCV.Bridge
 
     [Serializable]
     public sealed class PoseLandmark { public double[] position; public JointState state; }
-
-    [Serializable]
-    public sealed class MotionSignal { public string name; public bool active; }
 
     [Serializable]
     public sealed class MotionEvent
@@ -146,7 +130,7 @@ namespace IPCV.Bridge
         {
             if (frame == null || !frame.IsValid()) return Reject();
             bool sharedClock = compareQpc && frame.clock == "qpc";
-            double age = sharedClock ? receipt - frame.captured_time_s : frame.processing_ms / 1000;
+            double age = sharedClock ? receipt - frame.captured_time_s : frame.sent_time_s - frame.captured_time_s;
             if (age < -0.001 || Math.Max(0, age) + now - receipt > timeout
                 || retired.Contains(frame.session_id)) return Reject();
             if (latest != null && latest.session_id == frame.session_id)

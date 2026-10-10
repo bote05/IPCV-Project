@@ -46,16 +46,16 @@ class PoseIntegrationTests(unittest.TestCase):
     def test_prediction_then_loss_releases_reach(self):
         for i in range(5):
             players = self.tracker.update([self.raw()], 10 + i / 30, ids=[1])
-        self.assertTrue(player_from_pose(players[0].to_dict((640, 480))).motion_signals[0].active)
+        self.assertTrue(player_from_pose(players[0].to_dict((640, 480))).hand_raised[0])
         predicted = self.tracker.update([], 10.2, ids=[])[0]
         self.assertFalse(predicted.detected)
         p = player_from_pose(predicted.to_dict((640, 480)))
         self.assertTrue(p.tracked)
         self.assertEqual(p.pose[Joint.LEFT_WRIST].state, JointState.PREDICTED)
-        self.assertTrue(p.motion_signals[0].active)
+        self.assertTrue(p.hand_raised[0])
         lost = player_from_pose(self.tracker.update([], 10.6, ids=[])[0].to_dict((640, 480)))
         self.assertFalse(lost.tracked)
-        self.assertEqual((lost.pose, lost.motion_signals, lost.events), ((), (), ()))
+        self.assertEqual((lost.pose, lost.hand_raised, lost.events), ((), (), ()))
 
     def test_real_pull_event_keeps_its_id_across_snapshots(self):
         seen = []

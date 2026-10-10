@@ -34,8 +34,11 @@ public sealed class BridgePlayModeTests
         Assert.That(f.players[0].pose[0].state, Is.EqualTo(JointState.Tracked));
         Assert.That(f.players[1].world_position_m, Is.EqualTo(new double[] { 0.4, 0, 2 }));
         Assert.That(f.players[0].head_rotation_deg.Length, Is.EqualTo(3));
-        Assert.That(f.players[0].motion_signals[0].name, Is.EqualTo("left_reach"));
-        Assert.That(f.processing_ms, Is.EqualTo(100).Within(0.001));
+        Assert.That(f.players[1].hand_raised, Is.EqualTo(new[] { false, true }));
+        Assert.That(f.ProcessingMs, Is.EqualTo(100).Within(0.001));
+        Assert.That(JsonUtility.ToJson(f), Does.Not.Contain("processing_ms"));
+        f.sent_time_s += 0.001;
+        Assert.That(f.ProcessingMs, Is.EqualTo(101).Within(0.001));
         f.players[0].pose[0].position[0] = double.NaN;
         Assert.That(f.IsValid(), Is.False);
     }
@@ -62,9 +65,19 @@ public sealed class BridgePlayModeTests
         p.events = new[] { Event(1), Event(0) };
         Assert.That(p.IsValid(), Is.False, "events must be in id order");
         p.events = new[] { Event(0) };
+        p.events[0].type = "grab";
+        p.events[0].side = "both";
+        p.events[0].strength = -0.5;
         Assert.That(p.IsValid(), Is.True);
         p.events[0].strength = double.NaN;
         Assert.That(p.IsValid(), Is.False);
+        p = Fixture().players[0];
+        p.hand_raised = new[] { true };
+        Assert.That(p.IsValid(), Is.False);
+        p.hand_raised = new bool[3];
+        Assert.That(p.IsValid(), Is.False);
+        p.hand_raised = new bool[0];
+        Assert.That(p.IsValid(), Is.True, "unknown hands can be omitted");
     }
 
     private static MotionEvent Event(long id) =>
@@ -116,7 +129,7 @@ public sealed class BridgePlayModeTests
     private void Send(TrackingFrame f)
     {
         f.clock = Environment.OSVersion.Platform == PlatformID.Win32NT ? "qpc" : "local";
-        f.sent_time_s = BridgeClock.Now(); f.captured_time_s = f.sent_time_s - 0.004; f.processing_ms = 4;
+        f.sent_time_s = BridgeClock.Now(); f.captured_time_s = f.sent_time_s - 0.004;
         SendBytes(Encoding.UTF8.GetBytes(JsonUtility.ToJson(f)), port);
     }
 
@@ -159,7 +172,9 @@ public sealed class BridgePlayModeTests
         yield return Until(() => receiver.CurrentFrame?.sequence == 3);
         Assert.That(handled.Count, Is.EqualTo(2), "loss must not reset event ids");
 
-        f.sequence = 4; f.players[0].events = new[] { Event(0), Event(1), Event(2) }; Send(f);
+        f.sequence = 4; f.players[0].events = new[] { Event(0), Event(1), Event(2) };
+        f.players[0].events[1].type = "grab";
+        Send(f);
         yield return Until(() => handled.Count == 4);
         CollectionAssert.AreEqual(new[] { "1:0", "2:0", "1:1", "1:2" }, handled);
         f.sequence = 3; f.players[0].events = new[] { Event(3) }; Send(f);

@@ -1,7 +1,7 @@
 """Convert the team's tracking output to the bridge format."""
 
 from dataclasses import dataclass, field
-from .protocol import Joint, JointState, Landmark, MotionEvent, MotionSignal, PlayerState
+from .protocol import Joint, JointState, Landmark, MotionEvent, PlayerState
 
 
 @dataclass
@@ -23,9 +23,5 @@ def player_from_pose(data: dict) -> PlayerState:
         Landmark((joint["x"], joint["y"]), JointState(joint["state"]))
         for joint in data["joints"]
     )
-    signals = tuple(
-        MotionSignal(name, bool(raised))
-        for name, raised in zip(("left_reach", "right_reach"), data["hand_raised"])
-    )
-    return PlayerState(data["id"], True, pose=pose, motion_signals=signals,
+    return PlayerState(data["id"], True, pose=pose, hand_raised=tuple(data["hand_raised"]),
                        events=tuple(MotionEvent(**event) for event in data["events"]))

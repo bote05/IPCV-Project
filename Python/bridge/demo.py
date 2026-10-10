@@ -2,7 +2,7 @@
 
 import math
 
-from .protocol import Joint, JointState, Landmark, MotionSignal, PlayerState
+from .protocol import Joint, JointState, Landmark, PlayerState
 
 
 def demo_players(elapsed_seconds: float) -> tuple[PlayerState, ...]:
@@ -25,9 +25,6 @@ def demo_players(elapsed_seconds: float) -> tuple[PlayerState, ...]:
             player_id, True, tuple(pose), (center_x - 0.05, 0.12, 0.1, 0.14),
             head_rotation_deg=(20 * math.sin(phase), 10 * math.cos(phase), 0),
             world_position_m=((player_id - 1.5) * 0.8, 0, 2),
-            motion_signals=(
-                MotionSignal("left_reach", math.sin(phase) < 0),
-                MotionSignal("right_reach", math.cos(phase) < 0),
-            ),
+            hand_raised=(math.sin(phase) < 0, math.cos(phase) < 0),
         ))
     return tuple(players)

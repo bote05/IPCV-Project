@@ -40,12 +40,6 @@ class Landmark:
 
 
 @dataclass(frozen=True)
-class MotionSignal:
-    name: str
-    active: bool
-
-
-@dataclass(frozen=True)
 class MotionEvent:
     id: int
     type: str
@@ -62,7 +56,7 @@ class PlayerState:
     face_bbox: tuple[float, ...] = ()
     head_rotation_deg: tuple[float, ...] = ()
     world_position_m: tuple[float, ...] = ()
-    motion_signals: tuple[MotionSignal, ...] = ()
+    hand_raised: tuple[bool, ...] = ()
     events: tuple[MotionEvent, ...] = ()
 
 
@@ -90,7 +84,7 @@ def validate_players(players: tuple[PlayerState, ...]) -> None:
         ids.add(p.id)
         if type(p.tracked) is not bool:
             raise ValueError("tracked must be a boolean")
-        if not p.tracked and any((p.pose, p.face_bbox, p.head_rotation_deg, p.world_position_m, p.motion_signals, p.events)):
+        if not p.tracked and any((p.pose, p.face_bbox, p.head_rotation_deg, p.world_position_m, p.hand_raised, p.events)):
             raise ValueError("Untracked players must have empty tracking data")
         if len(p.pose) not in (0, len(Joint)):
             raise ValueError("pose must contain zero or 13 landmarks")
@@ -107,23 +101,17 @@ def validate_players(players: tuple[PlayerState, ...]) -> None:
                 raise ValueError(f"{name} must be empty or contain {size} finite numbers")
         if p.face_bbox and (p.face_bbox[2] < 0 or p.face_bbox[3] < 0):
             raise ValueError("Face width/height cannot be negative")
-        names = set()
-        for signal in p.motion_signals:
-            if not isinstance(signal.name, str) or not signal.name or signal.name in names:
-                raise ValueError("Motion signal names must be nonempty and unique per player")
-            names.add(signal.name)
-            if type(signal.active) is not bool:
-                raise ValueError("Motion signals need boolean active")
+        if len(p.hand_raised) not in (0, 2) or any(type(raised) is not bool for raised in p.hand_raised):
+            raise ValueError("hand_raised must be empty or contain two booleans: left, right")
         last_event_id = -1
         for event in p.events:
             if type(event.id) is not int or not last_event_id < event.id <= 2**63 - 1:
                 raise ValueError("Event IDs must be nonnegative, increasing and fit a C# long")
             last_event_id = event.id
-            if not ((event.type == "pull" and event.side in ("left", "right"))
-                    or (event.type == "jump" and event.side == "")):
-                raise ValueError("Events must be left/right pulls or jumps without a side")
-            if not finite_vector((event.strength, event.time), 2) or event.strength < 0 or event.time < 0:
-                raise ValueError("Event strength and time must be finite and nonnegative")
+            if not isinstance(event.type, str) or not event.type or not isinstance(event.side, str):
+                raise ValueError("Events need a nonempty type and a string side")
+            if not finite_vector((event.strength, event.time), 2):
+                raise ValueError("Event strength and time must be finite")
 
 
 def encode_frame(players: Iterable[PlayerState], *, session_id: str, sequence: int,
@@ -141,7 +129,6 @@ def encode_frame(players: Iterable[PlayerState], *, session_id: str, sequence: i
     packet = json.dumps({
         "session_id": session_id, "sequence": sequence,
         "clock": clock, "captured_time_s": captured_time_s, "sent_time_s": sent_time_s,
-        "processing_ms": (sent_time_s - captured_time_s) * 1000,
         "players": [asdict(p) for p in players],
     }, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(packet) > MAX_PACKET_BYTES:
