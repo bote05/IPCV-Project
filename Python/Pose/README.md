@@ -36,6 +36,9 @@ python -m Pose.demo --source clip.mp4                 # video file, every frame 
 python -m Pose.demo --mirror --record ../recordings/s1.jsonl --save-video ../recordings/s1.mp4
 ```
 
+`--mirror` only flips what is shown. Tracking, recordings and saved video always use the camera
+image as is, the same as in the integrated game.
+
 Thick skeleton: tracked joints. Thin lines and hollow orange joints: predicted through a gap. Grey
 crosses: raw detections. The plot at the bottom shows one wrist's raw height against the filtered
 estimate, with orange bands where it was predicted. Raised hands are circled; pull and jump events
@@ -55,16 +58,36 @@ from Pose import PoseDetector, PoseTracker
 detector = PoseDetector("full", num_poses=2)
 tracker = PoseTracker()
 
-players = tracker.update(detector.detect(frame, t), t)       # t: capture time in seconds
-messages = [p.to_dict((frame.shape[1], frame.shape[0])) for p in players]
+# once per frame; t is the capture time in seconds
+poses = detector.detect(frame, t)
+ids = identity.assign(poses)                  # Task 3: one player id per pose, None to ignore a pose
+players = tracker.update(poses, t, ids)
+messages = [p.to_dict((frame.shape[1], frame.shape[0]), mirror=True) for p in players]
 ```
 
-`tracker.update` only links detections to tracks from frame to frame, which is what the filters
-need. The identity module (Task 3) can pass its own ids, `tracker.update(poses, t, ids=[...])`,
-so each player's filter state follows the persistent player.
+Detection and tracking are separate calls so player identities can be assigned in between. The
+`ids` contract:
+- one entry per pose, in the order `detect` returned them
+- `None` discards a pose (a spectator, a false detection)
+- no id twice in one frame; a mismatch raises `ValueError`
+- a player id with no pose for 1 s is dropped; when it comes back, its filters restart cleanly
 
-`to_dict` gives one JSON-ready object per player. It uses lists rather than maps so Unity's
-`JsonUtility` can parse it, and never contains NaN:
+Without `ids`, the tracker links detections frame to frame itself, which is enough for the demo
+and for evaluation. To match poses to players, the identity module can use the previous frame's
+`PlayerPose` list, whose joints are smoothed and predicted through gaps.
+
+`to_dict` gives one JSON-ready object per player. Image positions are already normalised to 0..1,
+so the bridge does not need the image size. The output uses lists rather than maps so Unity's
+`JsonUtility` can parse it, and never contains NaN.
+
+**Mirroring:** processing runs on the camera image as is, and `to_dict(..., mirror=True)` flips
+the output for a mirrored display: `x` becomes 1 - x, and body x, horizontal velocities and lean
+change sign. Joint names stay the player's own left and right, which on a mirrored display appear
+on the same side of the screen as for the player.
+
+**Events** are repeated in every message for 200 ms (`TrackerConfig.event_hold`), so a dropped
+UDP message cannot lose one. Each event has an `id` that is unique for the session, so Unity acts
+on each id once and needs no cooldown to avoid double counting.
 
 | field | meaning |
 |---|---|
@@ -76,7 +99,7 @@ so each player's filter state follows the persistent player.
 | `arm_extension` | [left, right], 1 = straight arm |
 | `hand_raised` | [left, right], wrist above head height |
 | `joints[]` | `name`, `state` (0 lost, 1 acquiring, 2 predicted, 3 tracked), `x`/`y` normalised image position, `body` position and `velocity` in the body frame, `moving` |
-| `events[]` | `type` (`pull`, `jump`), `side`, `strength` |
+| `events[]` | `id` (unique per session), `type` (`pull`, `jump`), `side`, `strength`, `time` it fired |
 
 The game should only use joints with `state` 2 or 3.
 
@@ -84,8 +107,8 @@ The game should only use joints with `state` 2 or 3.
 
 **Selected joints.** Nose, shoulders, elbows, wrists, hips, knees and ankles (13 of the 33
 BlazePose landmarks). Climbing needs the hands and arms, the torso as a reference frame, and the
-legs and hips for jumps. Left and right are as MediaPipe labels them in the processed frame, so
-with `--mirror` the on-screen left hand is `left_*`.
+legs and hips for jumps. Left and right are the player's own sides: since the image is never
+flipped before detection, MediaPipe's labels match the player's anatomy.
 
 **Detector.** MediaPipe Pose Landmarker in VIDEO mode, which tracks people between frames instead
 of running the person detector every frame. The `full` model is the default (development laptop

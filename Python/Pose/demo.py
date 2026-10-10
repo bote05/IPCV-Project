@@ -13,14 +13,15 @@ import argparse
 import threading
 import time
 from collections import deque
+from dataclasses import replace
 
 import cv2
 import numpy as np
 
-from .detector import MODEL_VARIANTS, PoseDetector
+from .detector import MODEL_VARIANTS, PoseDetector, RawPose
 from .recording import FrameRecord, RecordingWriter
 from .skeleton import ELBOWS, WRISTS, Joint
-from .tracker import PoseTracker
+from .tracker import PlayerPose, PoseTracker
 from .visualize import EventFlash, SignalPlot, draw_player, draw_raw, draw_text, player_color
 
 OCCLUDED_JOINTS = [*ELBOWS, *WRISTS]
@@ -100,6 +101,22 @@ def degrade(frame: np.ndarray, brightness: float, noise: float, rng: np.random.G
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+def _flip_x(points: np.ndarray, width: int) -> np.ndarray:
+    flipped = points.copy()
+    flipped[..., 0] = width - flipped[..., 0]
+    return flipped
+
+
+def mirror_for_display(poses: list[RawPose], players: list[PlayerPose], width: int) -> tuple[list[RawPose], list[PlayerPose]]:
+    """Pose copies to draw on a horizontally flipped view; tracking itself never sees a flipped image."""
+    poses = [RawPose(_flip_x(pose.points, width), pose.confidence) for pose in poses]
+    players = [
+        replace(p, position=_flip_x(p.position, width), motion=replace(p.motion, center=_flip_x(p.motion.center, width)))
+        for p in players
+    ]
+    return poses, players
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--source", default="0", help="camera index or video file")
@@ -107,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--players", type=int, default=2, help="maximum number of people to detect")
     parser.add_argument("--width", type=int, default=1280, help="requested camera width")
     parser.add_argument("--height", type=int, default=720, help="requested camera height")
-    parser.add_argument("--mirror", action="store_true", help="flip the image horizontally before processing")
+    parser.add_argument("--mirror", action="store_true", help="mirror the display; tracking always uses the camera image as is")
     parser.add_argument("--brightness", type=float, default=1.0, help="intensity scale to simulate low light")
     parser.add_argument("--noise", type=float, default=0.0, help="gaussian noise std added after --brightness")
     parser.add_argument("--record", help="write raw detections to this .jsonl file")
@@ -141,8 +158,6 @@ def main() -> None:
             t = capture_time - start
             frame_clock.append(time.perf_counter())
 
-            if args.mirror:
-                frame = cv2.flip(frame, 1)
             frame = degrade(frame, args.brightness, args.noise, rng)
             height, width = frame.shape[:2]
 
@@ -160,8 +175,7 @@ def main() -> None:
 
             if args.record:
                 if recorder is None:
-                    meta = {"source": args.source, "model": args.model, "mirror": args.mirror,
-                            "brightness": args.brightness, "noise": args.noise}
+                    meta = {"source": args.source, "model": args.model, "brightness": args.brightness, "noise": args.noise}
                     recorder = RecordingWriter(args.record, (width, height), meta)
                 brightness = cv2.mean(cv2.cvtColor(frame[::4, ::4], cv2.COLOR_BGR2GRAY))[0]
                 recorder.write(FrameRecord(index, t, poses, detect_ms, brightness))
@@ -178,10 +192,14 @@ def main() -> None:
                 continue
 
             view = frame.copy()
+            shown_poses, shown_players = poses, players
+            if args.mirror:
+                view = cv2.flip(view, 1)
+                shown_poses, shown_players = mirror_for_display(poses, players, width)
             if show_raw:
-                for pose in poses:
+                for pose in shown_poses:
                     draw_raw(view, pose, on)
-            for player in players:
+            for player in shown_players:
                 draw_player(view, player)
                 flash.add(player)
             flash.draw(view, t)

@@ -9,15 +9,16 @@ occlusions and re-entry is the identity module's job, which can pass its own ids
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field, replace
+from itertools import count
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from .detector import RawPose
 from .filtering import FilterConfig, JointState, KeypointFilter
-from .motion import MotionAnalyzer, MotionConfig, MotionSignals, torso_length
+from .motion import MotionAnalyzer, MotionConfig, MotionEvent, MotionSignals, torso_length
 from .skeleton import JOINT_NAMES, NUM_JOINTS
 
 FALLBACK_SCALE = 150.0  # px, torso length of a player ~2 m from a 720p webcam; used until measured
@@ -28,6 +29,7 @@ class TrackerConfig:
     match_distance: float = 1.0  # torso lengths; mean joint distance beyond which a detection is a new person
     duplicate_distance: float = 0.2  # torso lengths; detections closer than this are the same person
     track_timeout: float = 1.0  # s without a detection before a track is dropped
+    event_hold: float = 0.2  # s an event stays in the output, so one lost message cannot lose it
     filter: FilterConfig = field(default_factory=FilterConfig)
     motion: MotionConfig = field(default_factory=MotionConfig)
 
@@ -41,22 +43,33 @@ class PlayerPose:
     velocity: np.ndarray  # (N, 2) px/s
     state: np.ndarray  # (N,) JointState
     raw: RawPose | None
-    motion: MotionSignals
+    motion: MotionSignals  # motion.events: the events fired in this frame
+    events: tuple[MotionEvent, ...]  # events fired within the last `event_hold` seconds
 
-    def to_dict(self, image_size: tuple[int, int]) -> dict:
+    def to_dict(self, image_size: tuple[int, int], mirror: bool = False) -> dict:
         """JSON-ready summary for the game. Image coordinates are normalised to [0, 1] (origin top
         left); body-frame values are in torso lengths with y up. Lists of objects instead of maps
-        keep it parseable by Unity's JsonUtility."""
+        keep it parseable by Unity's JsonUtility.
+
+        Each event is repeated in every message for `event_hold` seconds; the game acts on each
+        event id once. `mirror` flips everything horizontally for a mirrored display; joint names
+        stay the player's own left and right, which then appear on the same side of the screen.
+        """
         width, height = image_size
         m = self.motion
+        flip = np.array([-1.0, 1.0]) if mirror else np.ones(2)
+
+        def image_x(x: float) -> float:
+            return 1.0 - x / width if mirror else x / width
+
         joints = [
             {
                 "name": name,
                 "state": int(self.state[j]),
-                "x": _round(self.position[j, 0] / width),
+                "x": _round(image_x(self.position[j, 0])),
                 "y": _round(self.position[j, 1] / height),
-                "body": _round(m.body[j]),
-                "velocity": _round(m.body_velocity[j]),
+                "body": _round(m.body[j] * flip),
+                "velocity": _round(m.body_velocity[j] * flip),
                 "moving": bool(m.moving[j]),
             }
             for j, name in enumerate(JOINT_NAMES)
@@ -67,13 +80,16 @@ class PlayerPose:
             "detected": self.detected,
             "valid": m.valid,
             "scale": _round(m.scale / height),
-            "center": [_round(m.center[0] / width), _round(m.center[1] / height)],
-            "center_velocity": _round(m.center_velocity),
-            "lean": _round(m.lean),
+            "center": [_round(image_x(m.center[0])), _round(m.center[1] / height)],
+            "center_velocity": _round(m.center_velocity * flip),
+            "lean": _round(-m.lean if mirror else m.lean),
             "arm_extension": _round(m.arm_extension),
             "hand_raised": [bool(raised) for raised in m.hand_raised],
             "joints": joints,
-            "events": [{"type": e.kind, "side": e.side or "", "strength": _round(e.strength)} for e in m.events],
+            "events": [
+                {"id": e.id, "type": e.kind, "side": e.side or "", "strength": _round(e.strength), "time": _round(e.time)}
+                for e in self.events
+            ],
         }
 
 
@@ -86,11 +102,14 @@ def _round(value):
 class PlayerTracker:
     """Filtering and motion analysis for one person."""
 
-    def __init__(self, track_id: int, config: TrackerConfig):
+    def __init__(self, track_id: int, config: TrackerConfig, event_ids: Iterator[int]):
         self.id = track_id
         self.last_detected = -np.inf
         self._time: float | None = None
         self._confidence_on = config.filter.confidence_on
+        self._event_hold = config.event_hold
+        self._event_ids = event_ids
+        self._recent_events: list[MotionEvent] = []
         self._filter = KeypointFilter(NUM_JOINTS, config.filter)
         self._motion = MotionAnalyzer(NUM_JOINTS, config.motion)
 
@@ -123,7 +142,12 @@ class PlayerTracker:
 
         f = self._filter
         motion = self._motion.update(f.position, f.velocity, f.state, t)
-        return PlayerPose(self.id, t, raw is not None, f.position.copy(), f.velocity.copy(), f.state.copy(), raw, motion)
+        fired = tuple(replace(event, id=next(self._event_ids)) for event in motion.events)
+        self._recent_events = [e for e in self._recent_events if t - e.time < self._event_hold] + list(fired)
+        return PlayerPose(
+            self.id, t, raw is not None, f.position.copy(), f.velocity.copy(), f.state.copy(), raw,
+            replace(motion, events=fired), tuple(self._recent_events),
+        )
 
 
 class PoseTracker:
@@ -133,17 +157,23 @@ class PoseTracker:
         self.config = config
         self._tracks: dict[int, PlayerTracker] = {}
         self._next_id = 0
+        self._event_ids = count()
 
-    def update(self, poses: Sequence[RawPose], t: float, ids: Sequence[int] | None = None) -> list[PlayerPose]:
+    def update(self, poses: Sequence[RawPose], t: float, ids: Sequence[int | None] | None = None) -> list[PlayerPose]:
         """Advance all tracks to time `t` (s). Without `ids`, detections are matched to tracks
-        here; with `ids` (e.g. from the identity module) detection i belongs to track ids[i]."""
+        here. With `ids` (from the identity module) detection i belongs to player ids[i], and a
+        None id discards that detection, e.g. a spectator."""
         if ids is None:
             assigned = self._associate(self._deduplicate(poses), t)
         else:
-            assigned = dict(zip(ids, poses))
+            if len(ids) != len(poses):
+                raise ValueError(f"got {len(ids)} ids for {len(poses)} poses")
+            assigned = {track_id: pose for track_id, pose in zip(ids, poses) if track_id is not None}
+            if len(assigned) != sum(track_id is not None for track_id in ids):
+                raise ValueError(f"duplicate ids {list(ids)}")
 
         for track_id in assigned.keys() - self._tracks.keys():
-            self._tracks[track_id] = PlayerTracker(track_id, self.config)
+            self._tracks[track_id] = PlayerTracker(track_id, self.config, self._event_ids)
             self._next_id = max(self._next_id, track_id + 1)
 
         results = [track.update(assigned.get(track_id), t) for track_id, track in sorted(self._tracks.items())]

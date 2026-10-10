@@ -44,6 +44,7 @@ class MotionEvent:
     side: str | None  # "left" / "right" for pulls
     time: float
     strength: float  # pull: travel in torso lengths; jump: hip speed in torso lengths/s
+    id: int = -1  # unique per session, assigned by the tracker
 
 
 @dataclass(frozen=True)
