@@ -1,0 +1,5 @@
+{
+  "name": "IPCV.Bridge.Tests",
+  "references": ["IPCV.Bridge"],
+  "optionalUnityReferences": ["TestAssemblies"]
+}
