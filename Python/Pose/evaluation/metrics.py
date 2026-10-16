@@ -63,6 +63,12 @@ def frame_period(time: np.ndarray) -> float:
     return float(np.median(np.diff(time)))
 
 
+def run_duration(time: np.ndarray, run: slice) -> float:
+    """Seconds covered by the frames of `run`, each frame lasting one frame period: from the first
+    frame to one period past the last, so dropped frames inside the run count as elapsed time."""
+    return float(time[run.stop - 1] - time[run.start] + frame_period(time))
+
+
 def _sample_runs(time: np.ndarray, valid: np.ndarray, min_length: int = 2) -> list[slice]:
     limit = MAX_GAP_PERIODS * frame_period(time) * (1 + 1e-9)
     runs = []
@@ -121,8 +127,9 @@ def static_mask(track: Track, reference: np.ndarray, max_speed: float = 0.15, mi
     observed = np.isfinite(speed)
     still = np.where(observed, speed < max_speed, True).all(axis=1) & (observed.sum(axis=1) >= 4)
     mask = np.zeros(len(still), dtype=bool)
-    for run in contiguous_runs(still, round(min_duration / frame_period(track.time))):
-        mask[run] = True
+    for run in contiguous_runs(still):
+        if run_duration(track.time, run) >= min_duration * (1 - 1e-9):
+            mask[run] = True
     return mask
 
 

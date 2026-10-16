@@ -4,8 +4,8 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from Pose.evaluation.experiments import accuracy
-from Pose.evaluation.metrics import Track, acceleration_rms, contiguous_runs, lag, match_events, reference_trajectory
+from Pose.evaluation.experiments import JOINT_GROUPS, accuracy, dropout, summarize
+from Pose.evaluation.metrics import Track, acceleration_rms, contiguous_runs, lag, match_events, reference_trajectory, static_mask
 from Pose.evaluation.recording import FrameRecord, RecordingWriter, load_recording
 from Pose.evaluation.replay import Analysis, replay, weighted_lag
 from Pose.evaluation.report import write_json
@@ -20,6 +20,11 @@ from .poses import raw, standing
 def test_contiguous_runs():
     mask = np.array([0, 1, 1, 0, 1, 1, 1, 0, 1], dtype=bool)
     assert contiguous_runs(mask, min_length=2) == [slice(1, 3), slice(4, 7)]
+
+
+def uneven_time(count=300):
+    """Timestamps alternating 20 ms and 60 ms apart, as when the webcam reader drops frames."""
+    return np.r_[0.0, np.cumsum(np.tile([0.02, 0.06], count)[: count - 1])]
 
 
 def lag_track(delay=0.0, time=None):
@@ -44,14 +49,14 @@ def test_lag_recovers_a_known_delay(delay):
 
 @pytest.mark.parametrize("delay", [0.0, 0.05, 0.12])
 def test_lag_uses_elapsed_time_with_uneven_samples(delay):
-    time = np.r_[0.0, np.cumsum(np.tile([0.02, 0.06], 150)[:299])]
+    time = uneven_time()
     track, reference = lag_track(delay, time)
     assert lag(track, reference) == pytest.approx(delay, abs=0.005)
 
 
 @pytest.mark.parametrize("acceleration", [0.0, 200.0])
 def test_acceleration_uses_actual_sample_intervals(acceleration):
-    time = np.r_[0.0, np.cumsum(np.tile([0.02, 0.06], 150)[:299])]
+    time = uneven_time()
     track, _ = lag_track(time=time)
     points = np.broadcast_to(standing(), track.position.shape).copy()
     points[..., 0] += (100 * time + 0.5 * acceleration * time**2)[:, None]
@@ -60,7 +65,7 @@ def test_acceleration_uses_actual_sample_intervals(acceleration):
 
 
 def test_reference_filter_preserves_constant_speed_with_uneven_samples():
-    time = np.r_[0.0, np.cumsum(np.tile([0.02, 0.06], 150)[:299])]
+    time = uneven_time()
     track, _ = lag_track(time=time)
     track.raw = np.broadcast_to(standing(), track.raw.shape).copy()
     track.raw[..., 0] += (100 * time)[:, None]
@@ -85,7 +90,14 @@ def test_reference_filter_does_not_bridge_gaps(gap_type):
     np.testing.assert_allclose(reference[valid], track.raw[valid], atol=1e-8)
 
 
-@pytest.mark.parametrize("case", ["missing_reference", "stationary", "untracked", "missing_y", "short"])
+@pytest.mark.parametrize(("count", "still"), [(32, True), (24, False)])  # 1.24 s and 0.92 s
+def test_still_periods_are_measured_in_elapsed_time(count, still):
+    track, _ = lag_track(time=uneven_time(count))
+    reference = np.broadcast_to(standing(), track.raw.shape).copy()
+    assert (static_mask(track, reference, min_duration=1.0) == still).all()
+
+
+@pytest.mark.parametrize("case",["missing_reference", "stationary", "untracked", "missing_y", "short"])
 def test_lag_is_unavailable_without_measurable_motion(case):
     track, reference = lag_track()
     if case == "missing_reference":
@@ -138,6 +150,23 @@ def test_recording_round_trip_and_replay(tmp_path):
     track = result.tracks[0]
     assert track.tracked[-1].all()
     assert np.std(track.position[30:, 0, 0]) < np.std(track.raw[30:, 0, 0])
+
+
+def test_still_time_and_gap_lengths_use_elapsed_time_with_uneven_samples(tmp_path):
+    path = tmp_path / "session.jsonl"
+    time = uneven_time(150)
+    with RecordingWriter(path, (640, 480)) as writer:
+        for i, t in enumerate(time):
+            writer.write(FrameRecord(i, float(t), [raw(standing())], detect_ms=20.0, brightness=120.0))
+
+    summary, [analysis] = summarize(path, TrackerConfig(), [], cutoff=6.0)
+    still = analysis.track.time[analysis.still]  # all frames once the torso length is known
+    assert len(still) > 140
+    assert summary["tracks"][0]["still_s"] == pytest.approx(still[-1] - still[0] + 0.02)
+
+    # 5 hidden frames, two 20 ms and two 60 ms intervals plus the last frame's 20 ms
+    rows = dropout(path, TrackerConfig(), JOINT_GROUPS["arms"], [0.1])
+    assert [row["gap_ms"] for row in rows] == pytest.approx([180.0] * len(rows))
 
 
 @pytest.mark.parametrize("missed_poses", [[], [raw(standing(origin=(1000, 150)))]])

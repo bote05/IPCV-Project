@@ -15,7 +15,7 @@ from ..matching import match_pairs
 from ..motion import torso_length
 from ..skeleton import ELBOWS, JOINT_NAMES, NUM_JOINTS, WRISTS
 from ..tracker import TrackerConfig
-from .metrics import contiguous_runs, frame_period, match_events, reference_events
+from .metrics import contiguous_runs, frame_period, match_events, reference_events, run_duration
 from .recording import FrameRecord, Recording, load_recording
 from .replay import MIN_TRACK_DURATION, Analysis, Replay, analyses, joint_metrics, pool, replay, weighted_lag
 
@@ -42,7 +42,7 @@ def summarize(path: str, config: TrackerConfig, intervals, cutoff: float) -> tup
         "detect_ms": _stats(detect_ms),
         "track_ms": _stats(result.track_ms),
         "people_per_frame": {"0": people[0], "1": people[1], "2+": people[2]},
-        "tracks": [{"id": a.track.id, "duration_s": a.track.duration, "still_s": a.still.sum() * frame_period(a.track.time)} for a in items],
+        "tracks": [{"id": a.track.id, "duration_s": a.track.duration, "still_s": _covered_time(a.track.time, a.still)} for a in items],
     }
     if not items:
         return summary, items
@@ -111,7 +111,8 @@ def with_gaps(recording: Recording, gap: np.ndarray, joints: list[int]) -> Recor
 def dropout(path: str, config: TrackerConfig, joints: list[int], durations: list[float]) -> list[dict]:
     recording = load_recording(path)
     base = replay(recording, config)
-    period = frame_period(np.array([frame.time for frame in recording.frames]))
+    times = np.array([frame.time for frame in recording.frames])
+    period = frame_period(times)
     rows = []
     for strategy, decay in GAP_STRATEGIES.items():
         variant = replace(config, filter=replace(config.filter, prediction_decay=decay))
@@ -122,13 +123,15 @@ def dropout(path: str, config: TrackerConfig, joints: list[int], durations: list
             gap = np.zeros(len(recording.frames), dtype=bool)
             for start in range(spacing // 2, len(recording.frames) - length, spacing):
                 gap[start : start + length] = True
+            # Dropped frames make the same number of hidden frames last longer: report elapsed time.
+            hidden = [run_duration(times, run) for run in contiguous_runs(gap)]
             gapped = replay(with_gaps(recording, gap, joints), variant, base.assignments)
-            rows.append({"strategy": strategy, "gap_ms": length * period * 1000,
-                         **_compare_gapped(clean, gapped, gap, joints, period)})
+            rows.append({"strategy": strategy, "gap_ms": (np.mean(hidden) if hidden else length * period) * 1000,
+                         **_compare_gapped(clean, gapped, gap, joints)})
     return rows
 
 
-def _compare_gapped(clean: Replay, gapped: Replay, gap: np.ndarray, joints: list[int], period: float) -> dict:
+def _compare_gapped(clean: Replay, gapped: Replay, gap: np.ndarray, joints: list[int]) -> dict:
     errors, usable, recovery = [], [], []
     extra = gaps = 0
     for track_id, reference in clean.tracks.items():
@@ -148,7 +151,7 @@ def _compare_gapped(clean: Replay, gapped: Replay, gap: np.ndarray, joints: list
             for k in range(run.stop, len(in_gap)):
                 settled = track.usable[k, joints] & (error[k] < RECOVERED_ERROR)
                 if (settled | ~reference.tracked[k, joints]).all():
-                    recovery.append((k - run.stop + 1) * period)
+                    recovery.append(run_duration(reference.time, slice(run.stop, k + 1)))
                     break
         extra += match_events(track.events, reference.events, tolerance=0.3).extra
     errors = np.array(errors)
@@ -231,6 +234,10 @@ def accuracy(path: str, annotation_path: str, config: TrackerConfig) -> dict:
             "pck_filtered": float(np.mean(np.nan_to_num(filtered, nan=np.inf) < 0.2)),
         }
     return {"annotated_people": annotated_people, "matched_people": matched_people, "joints": joints}
+
+
+def _covered_time(time: np.ndarray, mask: np.ndarray) -> float:
+    return sum(run_duration(time, run) for run in contiguous_runs(mask))
 
 
 def _finite_mean(values: np.ndarray) -> float:
