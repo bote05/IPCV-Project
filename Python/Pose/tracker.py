@@ -191,9 +191,14 @@ class PoseTracker:
         unmatched = set(range(len(poses)))
         if tracks and poses:
             cost = np.array([[track.distance(pose, t) for track in tracks] for pose in poses])
-            rows, cols = linear_sum_assignment(np.minimum(cost, 1e6))
+            valid = np.isfinite(cost) & (cost <= self.config.match_distance)
+            # One extra match must outweigh any reduction in the total distance.
+            unmatched_cost = (min(cost.shape) + 1) * (cost[valid].max(initial=0.0) + 1.0)
+            unmatched_options = np.full((len(poses), len(poses)), unmatched_cost)
+            costs = np.concatenate([np.where(valid, cost, np.inf), unmatched_options], axis=1)
+            rows, cols = linear_sum_assignment(costs)
             for row, col in zip(rows, cols):
-                if cost[row, col] <= self.config.match_distance:
+                if col < len(tracks):
                     assigned[tracks[col].id] = poses[row]
                     unmatched.discard(row)
         for row in sorted(unmatched):

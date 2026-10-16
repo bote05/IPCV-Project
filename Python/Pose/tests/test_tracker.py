@@ -25,6 +25,39 @@ def test_tracks_follow_people_regardless_of_detection_order():
     assert ids_by_side["left"] != ids_by_side["right"]
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_association_keeps_both_valid_matches_before_minimizing_distance(reverse):
+    tracker = PoseTracker()
+    for i in range(10):
+        tracker.update([raw(standing(origin=(200, 150))), raw(standing(origin=(300, 150)))], i * DT)
+    first = raw(standing(origin=(230, 150 + np.sqrt(7200))))
+    second = raw(standing(origin=(210, 150)))
+    poses = [second, first] if reverse else [first, second]
+    players = tracker.update(poses, 0.4)
+
+    assert len(players) == 2
+    assert all(player.detected for player in players)
+    assert players[0].id == 0 and players[0].raw is first
+    assert players[1].id == 1 and players[1].raw is second
+
+
+@pytest.mark.parametrize("positions", [[800], [205, 800], [205, 305, 800]])
+def test_association_leaves_out_of_range_detections_unmatched(positions):
+    tracker = PoseTracker()
+    for i in range(10):
+        tracker.update([raw(standing(origin=(200, 150))), raw(standing(origin=(300, 150)))], i * DT)
+    poses = [raw(standing(origin=(x, 150))) for x in positions]
+    by_id = {p.id: p for p in tracker.update(poses, 0.4)}
+
+    assert set(by_id) == {0, 1, 2}
+    assert by_id[2].raw is poses[-1]
+    assert by_id[0].detected == (205 in positions)
+    assert by_id[1].detected == (305 in positions)
+    for track_id, x in [(0, 205), (1, 305)]:
+        if x in positions:
+            assert by_id[track_id].raw is poses[positions.index(x)]
+
+
 @pytest.mark.parametrize("on,off", [(0.6, 0.4), (0.8, 0.6)])
 def test_association_preserves_tracks_with_continuation_confidence(on, off):
     tracker = PoseTracker(TrackerConfig(filter=FilterConfig(confidence_on=on, confidence_off=off)))
