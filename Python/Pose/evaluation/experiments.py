@@ -163,7 +163,8 @@ def _compare_gapped(clean: Replay, gapped: Replay, gap: np.ndarray, joints: list
 
 def accuracy(path: str, annotation_path: str, config: TrackerConfig) -> dict:
     """Compare raw and filtered joints with hand-annotated positions. A joint counts as correct
-    (PCK) when it is detected within 20% of the annotated torso length."""
+    (PCK) when it is detected within 20% of the annotated torso length. Unmatched people count
+    as failures; distance errors are measured only where estimates are available."""
     recording = load_recording(path)
     annotations = json.loads(Path(annotation_path).read_text(encoding="utf-8"))
     result = replay(recording, config)
@@ -188,8 +189,12 @@ def accuracy(path: str, annotation_path: str, config: TrackerConfig) -> dict:
                 continue
             annotated_people += 1
             torso = torso_length(truth, annotated)
+            if torso is None or not np.isfinite(torso) or torso <= 0:
+                continue
             distances = [np.linalg.norm(pose.points[annotated] - truth[annotated], axis=1).mean() for pose in poses]
-            if not distances or torso is None or min(distances) > torso:
+            if not distances or min(distances) > torso:
+                for j in np.flatnonzero(annotated):
+                    samples[int(j)].append((False, np.nan, np.nan, np.nan))
                 continue
             matched_people += 1
             best = int(np.argmin(distances))

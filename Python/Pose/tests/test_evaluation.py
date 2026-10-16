@@ -1,12 +1,15 @@
+import json
+
 import numpy as np
 import pytest
 
+from Pose.evaluation.experiments import accuracy
 from Pose.evaluation.metrics import Track, contiguous_runs, lag, match_events
 from Pose.evaluation.recording import FrameRecord, RecordingWriter, load_recording
 from Pose.evaluation.replay import replay
 from Pose.filtering import JointState
 from Pose.motion import MotionEvent
-from Pose.skeleton import NUM_JOINTS
+from Pose.skeleton import JOINT_NAMES, NUM_JOINTS
 from Pose.tracker import TrackerConfig
 
 from .poses import raw, standing
@@ -55,3 +58,35 @@ def test_recording_round_trip_and_replay(tmp_path):
     track = result.tracks[0]
     assert track.tracked[-1].all()
     assert np.std(track.position[30:, 0, 0]) < np.std(track.raw[30:, 0, 0])
+
+
+@pytest.mark.parametrize("missed_poses", [[], [raw(standing(origin=(1000, 150)))]])
+@pytest.mark.parametrize("all_missed", [False, True])
+def test_accuracy_counts_unmatched_people_as_failures(tmp_path, missed_poses, all_missed):
+    path = tmp_path / "session.jsonl"
+    annotation_path = tmp_path / "annotations.json"
+    pose = raw(standing())
+    with RecordingWriter(path, (640, 480)) as writer:
+        for i in range(4):
+            poses = missed_poses if all_missed or i == 3 else [pose]
+            writer.write(FrameRecord(i, i / 30, poses, 20.0, 120.0))
+    person = dict(zip(JOINT_NAMES, pose.points.tolist()))
+    person["right_ankle"] = None
+    annotation_path.write_text(json.dumps({"frames": {"2": [person], "3": [person]}}), encoding="utf-8")
+
+    result = accuracy(path, annotation_path, TrackerConfig())
+
+    assert result["annotated_people"] == 2
+    assert result["matched_people"] == (0 if all_missed else 1)
+    assert set(result["joints"]) == set(JOINT_NAMES) - {"right_ankle"}
+    for metrics in result["joints"].values():
+        assert metrics["annotated"] == 2
+        expected = 0.0 if all_missed else 0.5
+        assert metrics["detection_rate"] == expected
+        assert metrics["pck_raw"] == expected
+        assert metrics["pck_filtered"] == expected
+        for key in ("median_error_px", "mean_error_raw", "mean_error_filtered"):
+            if all_missed:
+                assert np.isnan(metrics[key])
+            else:
+                assert metrics[key] == pytest.approx(0.0)
