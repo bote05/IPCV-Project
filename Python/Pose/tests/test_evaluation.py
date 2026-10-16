@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from Pose.evaluation.experiments import accuracy
 from Pose.evaluation.metrics import Track, contiguous_runs, lag, match_events
 from Pose.evaluation.recording import FrameRecord, RecordingWriter, load_recording
-from Pose.evaluation.replay import replay
+from Pose.evaluation.replay import Analysis, replay, weighted_lag
 from Pose.filtering import JointState
 from Pose.motion import MotionEvent
 from Pose.skeleton import JOINT_NAMES, NUM_JOINTS
@@ -20,8 +21,7 @@ def test_contiguous_runs():
     assert contiguous_runs(mask, min_length=2) == [slice(1, 3), slice(4, 7)]
 
 
-@pytest.mark.parametrize("delay", [0.0, 0.05, 0.12])
-def test_lag_recovers_a_known_delay(delay):
+def lag_track(delay=0.0):
     rate = 30.0
     time = np.arange(300) / rate
     motion = lambda t: 50 * np.sin(2 * np.pi * 0.7 * t) + 20 * np.sin(2 * np.pi * 1.9 * t)
@@ -32,7 +32,43 @@ def test_lag_recovers_a_known_delay(delay):
         confidence=np.ones((300, NUM_JOINTS)), position=position,
         state=np.full((300, NUM_JOINTS), JointState.TRACKED), scale=np.full(300, 100.0), min_confidence=0.6,
     )
+    return track, reference
+
+
+@pytest.mark.parametrize("delay", [0.0, 0.05, 0.12])
+def test_lag_recovers_a_known_delay(delay):
+    track, reference = lag_track(delay)
     assert lag(track, reference) == pytest.approx(delay, abs=0.005)
+
+
+@pytest.mark.parametrize("case", ["missing_reference", "stationary", "untracked", "missing_y", "short"])
+def test_lag_is_unavailable_without_measurable_motion(case):
+    track, reference = lag_track()
+    if case == "missing_reference":
+        reference[:] = np.nan
+    elif case == "stationary":
+        reference[:] = standing()
+        track.position[:] = reference
+    elif case == "untracked":
+        track.state[:] = JointState.LOST
+    elif case == "missing_y":
+        reference[..., 1] = np.nan
+    else:
+        track = replace(track, time=track.time[:1], position=track.position[:1],
+                        scale=track.scale[:1], state=track.state[:1])
+        reference = reference[:1]
+    assert np.isnan(lag(track, reference))
+
+
+def test_weighted_lag_excludes_unavailable_tracks():
+    track, reference = lag_track(0.12)
+    still = np.zeros(len(track.time), dtype=bool)
+    valid = Analysis(track, reference, still)
+    missing = Analysis(track, np.full_like(reference, np.nan), still)
+    stationary_track = replace(track, position=np.broadcast_to(standing(), track.position.shape).copy())
+    stationary = Analysis(stationary_track, stationary_track.position.copy(), still)
+    assert weighted_lag([valid, missing, stationary]) == pytest.approx(0.12, abs=0.005)
+    assert np.isnan(weighted_lag([missing, stationary]))
 
 
 def test_events_are_matched_by_kind_side_and_time():

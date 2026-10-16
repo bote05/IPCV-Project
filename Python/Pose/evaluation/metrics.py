@@ -147,21 +147,34 @@ def reference_error(track: Track, points: np.ndarray, valid: np.ndarray, referen
 
 def lag(track: Track, reference: np.ndarray, max_lag: float = 0.3) -> float:
     """Delay in seconds of the filtered output behind the reference: the time shift that best aligns
-    them, refined to sub-frame precision with a parabola through the three best shifts."""
+    them, refined to sub-frame precision with a parabola through the three best shifts.
+    Returns nan when there is insufficient motion or no usable alignment."""
+    if len(track.time) < 2:
+        return np.nan
     dt = frame_period(track.time)
+    if not np.isfinite(dt) or dt <= 0:
+        return np.nan
     position = track.position / track.scale[:, None, None]
     target = reference / track.scale[:, None, None]
     tracked = track.tracked
-    max_shift = int(max_lag / dt) + 1
+    observed = np.isfinite(target).all(axis=2)
+    adjacent = observed[1:] & observed[:-1]
+    displacement = np.linalg.norm(np.diff(reference, axis=0), axis=2) / track.scale[1:, None]
+    if not np.any(adjacent & (displacement > 1e-6)):
+        return np.nan
+    max_shift = min(int(max_lag / dt) + 1, len(track.time) - 1)
     shifts = np.arange(-max_shift, max_shift + 1)
     errors = []
     for shift in shifts:
         # Compare the output at frame i + shift with the reference at frame i.
         a, b, valid = position[max(shift, 0) :], target[max(-shift, 0) :], tracked[max(shift, 0) :]
         n = min(len(a), len(b))
-        ok = valid[:n] & np.isfinite(a[:n, :, 0]) & np.isfinite(b[:n, :, 0])
+        ok = valid[:n] & np.isfinite(a[:n]).all(axis=2) & np.isfinite(b[:n]).all(axis=2)
         errors.append(np.sum((a[:n] - b[:n]) ** 2, axis=2)[ok].mean() if ok.any() else np.inf)
     errors = np.array(errors)
+    finite = errors[np.isfinite(errors)]
+    if len(finite) < 3 or np.allclose(finite, finite[0], rtol=1e-9, atol=1e-12):
+        return np.nan
     best = int(np.argmin(errors))
     offset = 0.0
     if 0 < best < len(errors) - 1 and np.isfinite(errors[best - 1 : best + 2]).all():
