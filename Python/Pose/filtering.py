@@ -101,6 +101,12 @@ class KeypointFilter:
     def position(self) -> np.ndarray:
         return self._euro.value
 
+    def confidence_thresholds(self, t: float) -> np.ndarray:
+        """Per-joint confidence needed to continue a live estimate or acquire a new one."""
+        live = (self.state == JointState.TRACKED) | (self.state == JointState.PREDICTED)
+        live &= t - self._last_seen <= self.config.max_gap
+        return np.where(live, self.config.confidence_off, self.config.confidence_on)
+
     def update(self, points: np.ndarray | None, confidence: np.ndarray | None, t: float, scale: float) -> None:
         """Advance to time `t` (s). `points` is None when the player was not detected this frame;
         `scale` is the body length in pixels used to express speeds and gates in body lengths."""
@@ -121,7 +127,7 @@ class KeypointFilter:
             confident = np.zeros_like(live)
             points = self.position
         else:
-            confident = confidence >= np.where(live, cfg.confidence_off, cfg.confidence_on)
+            confident = confidence >= self.confidence_thresholds(t)
 
         allowed = (cfg.max_speed * (t - self._last_seen) + cfg.gate_margin) * scale
         consistent = np.linalg.norm(points - self.position, axis=1) <= allowed

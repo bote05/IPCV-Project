@@ -4,7 +4,7 @@ from collections import defaultdict
 import numpy as np
 import pytest
 
-from Pose.filtering import JointState
+from Pose.filtering import FilterConfig, JointState
 from Pose.tracker import PoseTracker, TrackerConfig
 
 from .poses import raw, standing
@@ -23,6 +23,38 @@ def test_tracks_follow_people_regardless_of_detection_order():
             ids_by_side[side].add(player.id)
     assert len(ids_by_side["left"]) == 1 and len(ids_by_side["right"]) == 1
     assert ids_by_side["left"] != ids_by_side["right"]
+
+
+@pytest.mark.parametrize("on,off", [(0.6, 0.4), (0.8, 0.6)])
+def test_association_preserves_tracks_with_continuation_confidence(on, off):
+    tracker = PoseTracker(TrackerConfig(filter=FilterConfig(confidence_on=on, confidence_off=off)))
+    for i in range(5):
+        original = tracker.update([raw(LEFT)], i * DT)[0]
+    tracker.update([], 5 * DT)
+    for i in range(6, 20):
+        players = tracker.update([raw(LEFT, (on + off) / 2)], i * DT)
+        assert len(players) == 1
+        assert players[0].id == original.id and players[0].detected
+        assert (players[0].state == JointState.TRACKED).all()
+
+
+def test_weak_detections_do_not_create_tracks():
+    tracker = PoseTracker()
+    for i in range(10):
+        assert tracker.update([raw(LEFT, 0.5)], i * DT) == []
+    assert tracker.update([raw(LEFT)], 10 * DT)[0].id == 0
+
+
+@pytest.mark.parametrize("warmup", [1, 5])
+def test_continuation_confidence_cannot_acquire_or_revive_track(warmup):
+    tracker = PoseTracker()
+    for i in range(warmup):
+        original = tracker.update([raw(LEFT)], i * DT)[0]
+    t = warmup * DT if warmup == 1 else 0.7
+    players = tracker.update([raw(LEFT, 0.5)], t)
+    assert len(players) == 1 and players[0].id == original.id
+    assert not players[0].detected
+    assert (players[0].state == JointState.LOST).all()
 
 
 def test_duplicate_detections_of_one_person_become_one_track():

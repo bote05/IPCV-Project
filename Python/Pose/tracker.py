@@ -125,7 +125,7 @@ class PlayerTracker:
     def distance(self, pose: RawPose, t: float) -> float:
         """Mean distance in torso lengths between a detection and this track's predicted joints."""
         predicted, usable = self.predict(t)
-        common = usable & (pose.confidence >= self._confidence_on)
+        common = usable & (pose.confidence >= self._filter.confidence_thresholds(t))
         if not common.any():
             return np.inf
         return float(np.linalg.norm(pose.points[common] - predicted[common], axis=1).mean() / self.scale)
@@ -197,6 +197,8 @@ class PoseTracker:
                     assigned[tracks[col].id] = poses[row]
                     unmatched.discard(row)
         for row in sorted(unmatched):
+            if not (poses[row].confidence >= self.config.filter.confidence_on).any():
+                continue
             assigned[self._next_id] = poses[row]
             self._next_id += 1
         return assigned
