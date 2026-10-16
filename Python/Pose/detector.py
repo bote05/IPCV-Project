@@ -28,10 +28,19 @@ class RawPose:
 
     points: (NUM_JOINTS, 2) pixel coordinates.
     confidence: (NUM_JOINTS,) min(visibility, presence); low when a joint is occluded or out of frame.
+
+    Both are read-only copies, so one pose can be passed to the tracker, a recording and the
+    display without any of them changing it for the others.
     """
 
     points: np.ndarray
     confidence: np.ndarray
+
+    def __post_init__(self) -> None:
+        for name in ("points", "confidence"):
+            array = np.array(getattr(self, name), dtype=float)
+            array.flags.writeable = False
+            object.__setattr__(self, name, array)
 
     def hide(self, joints) -> RawPose:
         """Copy with `joints` reported as undetected, to simulate occlusion."""
