@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from ..filtering import FilterConfig
+from ..matching import match_pairs
 from ..motion import torso_length
 from ..skeleton import ELBOWS, JOINT_NAMES, NUM_JOINTS, WRISTS
 from ..tracker import TrackerConfig
@@ -179,6 +180,7 @@ def accuracy(path: str, annotation_path: str, config: TrackerConfig) -> dict:
         if f is None:
             continue
         poses = recording.frames[f].poses
+        truths = []
         for person in people:
             truth = np.full((NUM_JOINTS, 2), np.nan)
             for name, point in person.items():
@@ -191,13 +193,20 @@ def accuracy(path: str, annotation_path: str, config: TrackerConfig) -> dict:
             torso = torso_length(truth, annotated)
             if torso is None or not np.isfinite(torso) or torso <= 0:
                 continue
-            distances = [np.linalg.norm(pose.points[annotated] - truth[annotated], axis=1).mean() for pose in poses]
-            if not distances or min(distances) > torso:
+            truths.append((truth, annotated, torso))
+
+        cost = np.array([
+            [np.linalg.norm(pose.points[annotated] - truth[annotated], axis=1).mean() / torso for pose in poses]
+            for truth, annotated, torso in truths
+        ])
+        matches = dict(match_pairs(cost, max_distance=1.0))
+        matched_people += len(matches)
+        for person_index, (truth, annotated, torso) in enumerate(truths):
+            if person_index not in matches:
                 for j in np.flatnonzero(annotated):
                     samples[int(j)].append((False, np.nan, np.nan, np.nan))
                 continue
-            matched_people += 1
-            best = int(np.argmin(distances))
+            best = matches[person_index]
             pose = poses[best]
             track_id = result.assignments[f][best]
             track = result.tracks.get(track_id)

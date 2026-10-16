@@ -14,10 +14,10 @@ from dataclasses import dataclass, field, replace
 from itertools import count
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
 from .detector import RawPose
 from .filtering import FilterConfig, JointState, KeypointFilter
+from .matching import match_pairs
 from .motion import MotionAnalyzer, MotionConfig, MotionEvent, MotionSignals, torso_length
 from .skeleton import JOINT_NAMES, NUM_JOINTS
 
@@ -191,16 +191,9 @@ class PoseTracker:
         unmatched = set(range(len(poses)))
         if tracks and poses:
             cost = np.array([[track.distance(pose, t) for track in tracks] for pose in poses])
-            valid = np.isfinite(cost) & (cost <= self.config.match_distance)
-            # One extra match must outweigh any reduction in the total distance.
-            unmatched_cost = (min(cost.shape) + 1) * (cost[valid].max(initial=0.0) + 1.0)
-            unmatched_options = np.full((len(poses), len(poses)), unmatched_cost)
-            costs = np.concatenate([np.where(valid, cost, np.inf), unmatched_options], axis=1)
-            rows, cols = linear_sum_assignment(costs)
-            for row, col in zip(rows, cols):
-                if col < len(tracks):
-                    assigned[tracks[col].id] = poses[row]
-                    unmatched.discard(row)
+            for row, col in match_pairs(cost, self.config.match_distance):
+                assigned[tracks[col].id] = poses[row]
+                unmatched.discard(row)
         for row in sorted(unmatched):
             if not (poses[row].confidence >= self.config.filter.confidence_on).any():
                 continue

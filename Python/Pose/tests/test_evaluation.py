@@ -126,3 +126,30 @@ def test_accuracy_counts_unmatched_people_as_failures(tmp_path, missed_poses, al
                 assert np.isnan(metrics[key])
             else:
                 assert metrics[key] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("detected_x", [[200], [200, 240], [200, 800]])
+def test_accuracy_matches_each_detection_to_only_one_person(tmp_path, reverse, detected_x):
+    path = tmp_path / "session.jsonl"
+    annotation_path = tmp_path / "annotations.json"
+    poses = [raw(standing(origin=(x, 150))) for x in detected_x]
+    with RecordingWriter(path, (640, 480)) as writer:
+        for i in range(4):
+            writer.write(FrameRecord(i, i / 30, poses, 20.0, 120.0))
+    people = [dict(zip(JOINT_NAMES, standing(origin=(x, 150)).tolist())) for x in (200, 210)]
+    if reverse:
+        people.reverse()
+    annotation_path.write_text(json.dumps({"frames": {"3": people}}), encoding="utf-8")
+
+    result = accuracy(path, annotation_path, TrackerConfig())
+
+    both_matched = 240 in detected_x
+    assert result["annotated_people"] == 2
+    assert result["matched_people"] == (2 if both_matched else 1)
+    for metrics in result["joints"].values():
+        assert metrics["annotated"] == 2
+        assert metrics["detection_rate"] == (1.0 if both_matched else 0.5)
+        assert metrics["pck_raw"] == 0.5
+        assert metrics["pck_filtered"] == 0.5
+        assert metrics["median_error_px"] == pytest.approx(15.0 if both_matched else 0.0)
