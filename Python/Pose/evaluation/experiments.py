@@ -24,6 +24,10 @@ JOINT_GROUPS = {"arms": [*ELBOWS, *WRISTS], "all": list(range(NUM_JOINTS))}
 GAP_STRATEGIES = {"hold": 0.0, "damped": FilterConfig.prediction_decay, "constant velocity": float("inf")}
 
 
+class EvaluationError(Exception):
+    """The recording cannot be evaluated as requested; the command line reports it and exits."""
+
+
 def summarize(path: str, config: TrackerConfig, intervals, cutoff: float) -> tuple[dict, list[Analysis]]:
     recording = load_recording(path)
     result = replay(recording, config)
@@ -79,7 +83,7 @@ def sweep(path: str, config: TrackerConfig, intervals, cutoff: float, min_cutoff
     base = replay(recording, config)
     base_items = analyses(base, intervals, cutoff)
     if not base_items:
-        raise SystemExit(f"no track in {path} lasted {MIN_TRACK_DURATION} s")
+        raise EvaluationError(f"no track in {path} lasted {MIN_TRACK_DURATION} s")
     rows = []
     for min_cutoff in min_cutoffs:
         for beta in betas:

@@ -1,10 +1,12 @@
 import json
+import sys
 from dataclasses import replace
 
 import numpy as np
 import pytest
 
-from Pose.evaluation.experiments import JOINT_GROUPS, accuracy, dropout, summarize
+from Pose.evaluation import __main__ as cli
+from Pose.evaluation.experiments import JOINT_GROUPS, EvaluationError, accuracy, dropout, summarize, sweep
 from Pose.evaluation.metrics import Track, acceleration_rms, contiguous_runs, lag, match_events, reference_trajectory, static_mask
 from Pose.evaluation.recording import FrameRecord, RecordingWriter, load_recording
 from Pose.evaluation.replay import Analysis, replay, weighted_lag
@@ -252,3 +254,18 @@ def test_json_output_is_standard_with_unavailable_measurements_as_null(tmp_path)
         "events": [{"median_delay_ms": None}],
     }
     assert np.isnan(data["lag_ms"]) and np.isnan(data["per_joint"][1])
+
+
+def test_unusable_recording_raises_and_only_the_command_line_exits(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "short.jsonl"
+    with RecordingWriter(path, (640, 480)) as writer:
+        for i in range(30):  # 1 s, shorter than any evaluated track
+            writer.write(FrameRecord(i, i / 30, [raw(standing())], detect_ms=20.0, brightness=120.0))
+    with pytest.raises(EvaluationError, match="no track"):
+        sweep(path, TrackerConfig(), [], 6.0, [1.0], [1.0])
+
+    monkeypatch.setattr(sys, "argv", ["evaluation", "sweep", str(path)])
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 1
+    assert "error: no track" in capsys.readouterr().err

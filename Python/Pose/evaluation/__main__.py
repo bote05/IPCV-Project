@@ -26,7 +26,7 @@ from ..filtering import FilterConfig
 from ..skeleton import JOINT_NAMES, Joint
 from ..tracker import TrackerConfig
 from . import report
-from .experiments import JOINT_GROUPS, accuracy, dropout, summarize, sweep
+from .experiments import JOINT_GROUPS, EvaluationError, accuracy, dropout, summarize, sweep
 
 
 def _interval(text: str) -> tuple[float, float]:
@@ -62,7 +62,13 @@ def main() -> None:
     accuracy_parser.add_argument("recording")
     accuracy_parser.add_argument("annotations")
     args = parser.parse_args()
+    try:
+        _run(args)
+    except EvaluationError as error:
+        parser.exit(1, f"{parser.prog}: error: {error}\n")
 
+
+def _run(args: argparse.Namespace) -> None:
     config = TrackerConfig(filter=replace(FilterConfig(), min_cutoff=args.min_cutoff, beta=args.beta))
     plots = Path(args.plots) if args.plots else None
     if plots:
