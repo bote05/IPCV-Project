@@ -4,7 +4,8 @@
 
 Click each requested joint of a person. Keys: s skip a joint that is not visible, u undo,
 n start the next person, enter/space next frame, q save and quit. Existing annotations are kept,
-so a session can be continued later.
+so a session can be continued later. A frame left unfinished with q is stored under "partial",
+which the evaluation ignores, and reopened with its clicks in the next session.
 
 Left and right are the person's own sides as MediaPipe labels them: for a person facing the
 camera in an unmirrored image, their left wrist appears on the right of the image.
@@ -27,24 +28,34 @@ MAX_DISPLAY_WIDTH = 1280
 
 
 class FrameAnnotator:
-    def __init__(self, frame: np.ndarray, joints: list[str], title: str):
+    def __init__(self, frame: np.ndarray, joints: list[str], title: str, people: list[dict] | None = None):
         self.frame = frame
         self.joints = joints
         self.title = title
         self.zoom = min(1.0, MAX_DISPLAY_WIDTH / frame.shape[1])
-        self.people: list[dict[str, list[float] | None]] = [{}]
+        self.people: list[dict[str, list[float] | None]] = [dict(person) for person in people] if people else [{}]
 
     @property
     def next_joint(self) -> str | None:
         current = self.people[-1]
         return next((name for name in self.joints if name not in current), None)
 
+    @property
+    def started(self) -> bool:
+        return any(self.people)
+
+    @property
+    def annotated(self) -> list[dict]:
+        """The people with at least one visible joint."""
+        return [person for person in self.people if any(point is not None for point in person.values())]
+
     def on_mouse(self, event: int, x: int, y: int, *_) -> None:
         if event == cv2.EVENT_LBUTTONDOWN and self.next_joint:
             self.people[-1][self.next_joint] = [x / self.zoom, y / self.zoom]
 
-    def run(self) -> list[dict] | None:
-        """Annotated people of this frame, or None when the user quits."""
+    def run(self) -> bool:
+        """Collect clicks until the frame is finished (True) or the user quits (False); `people`
+        holds the annotations either way."""
         cv2.setMouseCallback(WINDOW, self.on_mouse)
         while True:
             cv2.imshow(WINDOW, self._render())
@@ -60,9 +71,9 @@ class FrameAnnotator:
             elif key == ord("n") and current:
                 self.people.append({})
             elif key in (13, 32):
-                return [person for person in self.people if any(point is not None for point in person.values())]
+                return True
             elif key == ord("q"):
-                return None
+                return False
 
     def _render(self) -> np.ndarray:
         view = cv2.resize(self.frame, None, fx=self.zoom, fy=self.zoom)
@@ -93,23 +104,29 @@ def main() -> None:
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     output = Path(args.output)
     data = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {"video": args.video, "frames": {}}
+    partial = data.pop("partial", {})
 
     cv2.namedWindow(WINDOW)
     indices = np.linspace(0, total - 1, args.frames).round().astype(int)
     for n, index in enumerate(indices):
-        if str(index) in data["frames"]:
+        key = str(index)
+        if key in data["frames"]:
             continue
         capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
         ok, frame = capture.read()
         if not ok:
             continue
-        people = FrameAnnotator(frame, args.joints, f"frame {index} ({n + 1}/{len(indices)})").run()
-        if people is None:
+        annotator = FrameAnnotator(frame, args.joints, f"frame {index} ({n + 1}/{len(indices)})", partial.pop(key, None))
+        finished = annotator.run()
+        if finished:
+            data["frames"][key] = annotator.annotated
+        elif annotator.started:
+            partial[key] = annotator.people
+        output.write_text(json.dumps({**data, "partial": partial} if partial else data, indent=1), encoding="utf-8")
+        if not finished:
             break
-        data["frames"][str(index)] = people
-        output.write_text(json.dumps(data, indent=1), encoding="utf-8")
     cv2.destroyAllWindows()
-    print(f"{len(data['frames'])} frames annotated in {output}")
+    print(f"{len(data['frames'])} frames annotated in {output}" + (f", {len(partial)} unfinished" if partial else ""))
 
 
 if __name__ == "__main__":
