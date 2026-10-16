@@ -163,24 +163,24 @@ class PoseTracker:
         """Advance all tracks to time `t` (s). Without `ids`, detections are matched to tracks
         here. With `ids` (from the identity module) detection i belongs to player ids[i], and a
         None id discards that detection, e.g. a spectator."""
-        if ids is None:
-            assigned = self._associate(self._deduplicate(poses), t)
-        else:
+        if ids is not None:
             if len(ids) != len(poses):
                 raise ValueError(f"got {len(ids)} ids for {len(poses)} poses")
             assigned = {track_id: pose for track_id, pose in zip(ids, poses) if track_id is not None}
             if len(assigned) != sum(track_id is not None for track_id in ids):
                 raise ValueError(f"duplicate ids {list(ids)}")
 
+        expired = [tid for tid, track in self._tracks.items() if t - track.last_detected > self.config.track_timeout]
+        for track_id in expired:
+            del self._tracks[track_id]
+        if ids is None:
+            assigned = self._associate(self._deduplicate(poses), t)
+
         for track_id in assigned.keys() - self._tracks.keys():
             self._tracks[track_id] = PlayerTracker(track_id, self.config, self._event_ids)
             self._next_id = max(self._next_id, track_id + 1)
 
-        results = [track.update(assigned.get(track_id), t) for track_id, track in sorted(self._tracks.items())]
-        expired = [tid for tid, track in self._tracks.items() if t - track.last_detected > self.config.track_timeout]
-        for track_id in expired:
-            del self._tracks[track_id]
-        return [result for result in results if result.id not in expired]
+        return [track.update(assigned.get(track_id), t) for track_id, track in sorted(self._tracks.items())]
 
     def reset(self) -> None:
         self._tracks.clear()

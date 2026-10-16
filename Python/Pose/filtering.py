@@ -109,6 +109,10 @@ class KeypointFilter:
         self._time = t
 
         state = self.state
+        expired = t - self._last_seen > cfg.max_gap
+        state[expired] = JointState.LOST
+        self.velocity[expired] = 0.0
+        self._streak[expired] = 0
         live = (state == JointState.TRACKED) | (state == JointState.PREDICTED)
         acquiring = state == JointState.ACQUIRING
         lost = state == JointState.LOST
@@ -152,9 +156,8 @@ class KeypointFilter:
         state[(state == JointState.ACQUIRING) & (self._streak >= cfg.acquire_frames)] = JointState.TRACKED
         state[coast] = JointState.PREDICTED
 
-        gone = dropped | (coast & (t - self._last_seen > cfg.max_gap))
-        state[gone] = JointState.LOST
-        self.velocity[gone] = 0.0
-        self._streak[gone] = 0
+        state[dropped] = JointState.LOST
+        self.velocity[dropped] = 0.0
+        self._streak[dropped] = 0
 
         self.measured = accepted | restart

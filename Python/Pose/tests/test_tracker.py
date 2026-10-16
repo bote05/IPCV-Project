@@ -52,6 +52,32 @@ def test_external_ids_override_association():
     assert by_id[7].raw.points[0, 0] < 320
 
 
+@pytest.mark.parametrize("missing_frame", [False, True])
+def test_external_id_reentry_after_frame_gap_starts_fresh(missing_frame):
+    tracker = PoseTracker()
+    for i in range(10):
+        tracker.update([raw(LEFT)], i * DT, ids=[1])
+    if missing_frame:
+        tracker.update([], 10 * DT, ids=[])
+    for i in range(3):
+        player = tracker.update([raw(RIGHT)], 2.0 + i * DT, ids=[1])[0]
+        assert player.id == 1
+        expected = JointState.ACQUIRING if i < 2 else JointState.TRACKED
+        assert (player.state == expected).all()
+        np.testing.assert_allclose(player.position, RIGHT)
+        np.testing.assert_allclose(player.velocity, 0.0)
+        assert not player.events
+
+
+def test_automatic_association_does_not_reuse_expired_track():
+    tracker = PoseTracker()
+    for i in range(10):
+        previous = tracker.update([raw(LEFT)], i * DT)[0]
+    player = tracker.update([raw(LEFT)], 2.0)[0]
+    assert player.id != previous.id
+    assert (player.state == JointState.ACQUIRING).all()
+
+
 def test_identity_module_can_discard_detections():
     tracker = PoseTracker()
     players = tracker.update([raw(LEFT), raw(RIGHT)], 0.0, ids=[None, 1])

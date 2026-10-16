@@ -110,3 +110,33 @@ def test_lost_joint_restarts_at_new_detection():
     f.update(np.array([[500.0, 100.0]]), np.array([0.9]), 20 * DT, SCALE)
     assert f.state[0] == JointState.ACQUIRING
     np.testing.assert_allclose(f.position[0], (500.0, 100.0))
+
+
+@pytest.mark.parametrize("initial_frames", [2, 10])
+@pytest.mark.parametrize("missing_frame", [False, True])
+def test_elapsed_gap_restarts_acquisition(initial_frames, missing_frame):
+    f = KeypointFilter(1)
+    run(f, [(100.0, 100.0)] * initial_frames, [0.9] * initial_frames)
+    if missing_frame:
+        f.update(None, None, initial_frames * DT, SCALE)
+    point = np.array([[300.0, 100.0]])
+    for i, expected in enumerate([JointState.ACQUIRING, JointState.ACQUIRING, JointState.TRACKED]):
+        f.update(point, np.array([0.9]), 2.0 + i * DT, SCALE)
+        assert f.state[0] == expected
+        np.testing.assert_allclose(f.position, point)
+        np.testing.assert_allclose(f.velocity, 0.0)
+
+
+def test_expired_joint_requires_acquisition_confidence():
+    f = KeypointFilter(1)
+    run(f, [(100.0, 100.0)] * 10, [0.9] * 10)
+    f.update(np.array([[100.0, 100.0]]), np.array([0.5]), 2.0, SCALE)
+    assert f.state[0] == JointState.LOST
+    assert not f.measured[0]
+
+
+def test_detection_at_gap_limit_preserves_tracking():
+    f = KeypointFilter(1, FilterConfig(max_gap=0.5))
+    run(f, [(100.0, 100.0)] * 4, [0.9] * 4)
+    f.update(np.array([[100.0, 100.0]]), np.array([0.5]), 3 * DT + 0.5, SCALE)
+    assert f.state[0] == JointState.TRACKED
