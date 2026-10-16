@@ -170,7 +170,9 @@ python -m Pose.evaluation accuracy ../recordings/s1.jsonl ../recordings/s1_gt.js
 There is no ground truth during live play. The **reference** is a zero-phase (forward-backward)
 Butterworth low-pass of the raw detections: it follows the motion without delay but needs future
 frames, so the live filter's distance from it measures the jitter and lag the live filter leaves.
-Still periods are detected automatically (every joint slower than 0.15 torso lengths/s for ≥ 1 s)
+Recordings need not be evenly sampled (the webcam reader drops frames): accelerations use the
+actual timestamps, and the reference filter and lag search run on a uniform resampling of each
+gap-free segment. Still periods are detected automatically (every joint slower than 0.15 torso lengths/s for ≥ 1 s)
 or given with `--static START-END`.
 
 A protocol that covers the report template: two players, at 1.5 m and 2.5 m, in normal light,

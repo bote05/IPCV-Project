@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from Pose.evaluation.experiments import accuracy
-from Pose.evaluation.metrics import Track, contiguous_runs, lag, match_events
+from Pose.evaluation.metrics import Track, acceleration_rms, contiguous_runs, lag, match_events, reference_trajectory
 from Pose.evaluation.recording import FrameRecord, RecordingWriter, load_recording
 from Pose.evaluation.replay import Analysis, replay, weighted_lag
 from Pose.filtering import JointState
@@ -21,16 +21,16 @@ def test_contiguous_runs():
     assert contiguous_runs(mask, min_length=2) == [slice(1, 3), slice(4, 7)]
 
 
-def lag_track(delay=0.0):
-    rate = 30.0
-    time = np.arange(300) / rate
+def lag_track(delay=0.0, time=None):
+    time = np.arange(300) / 30 if time is None else time
+    count = len(time)
     motion = lambda t: 50 * np.sin(2 * np.pi * 0.7 * t) + 20 * np.sin(2 * np.pi * 1.9 * t)
     reference = np.repeat(np.stack([motion(time), motion(time)], axis=1)[:, None], NUM_JOINTS, axis=1)
     position = np.repeat(np.stack([motion(time - delay), motion(time - delay)], axis=1)[:, None], NUM_JOINTS, axis=1)
     track = Track(
-        id=0, frames=np.arange(300), time=time, detected=np.ones(300, bool), raw=reference,
-        confidence=np.ones((300, NUM_JOINTS)), position=position,
-        state=np.full((300, NUM_JOINTS), JointState.TRACKED), scale=np.full(300, 100.0), min_confidence=0.6,
+        id=0, frames=np.arange(count), time=time, detected=np.ones(count, bool), raw=reference,
+        confidence=np.ones((count, NUM_JOINTS)), position=position,
+        state=np.full((count, NUM_JOINTS), JointState.TRACKED), scale=np.full(count, 100.0), min_confidence=0.6,
     )
     return track, reference
 
@@ -39,6 +39,49 @@ def lag_track(delay=0.0):
 def test_lag_recovers_a_known_delay(delay):
     track, reference = lag_track(delay)
     assert lag(track, reference) == pytest.approx(delay, abs=0.005)
+
+
+@pytest.mark.parametrize("delay", [0.0, 0.05, 0.12])
+def test_lag_uses_elapsed_time_with_uneven_samples(delay):
+    time = np.r_[0.0, np.cumsum(np.tile([0.02, 0.06], 150)[:299])]
+    track, reference = lag_track(delay, time)
+    assert lag(track, reference) == pytest.approx(delay, abs=0.005)
+
+
+@pytest.mark.parametrize("acceleration", [0.0, 200.0])
+def test_acceleration_uses_actual_sample_intervals(acceleration):
+    time = np.r_[0.0, np.cumsum(np.tile([0.02, 0.06], 150)[:299])]
+    track, _ = lag_track(time=time)
+    points = np.broadcast_to(standing(), track.position.shape).copy()
+    points[..., 0] += (100 * time + 0.5 * acceleration * time**2)[:, None]
+    result = acceleration_rms(track, points, track.tracked, np.ones(len(time), bool))
+    np.testing.assert_allclose(result, acceleration / 100, atol=1e-8)
+
+
+def test_reference_filter_preserves_constant_speed_with_uneven_samples():
+    time = np.r_[0.0, np.cumsum(np.tile([0.02, 0.06], 150)[:299])]
+    track, _ = lag_track(time=time)
+    track.raw = np.broadcast_to(standing(), track.raw.shape).copy()
+    track.raw[..., 0] += (100 * time)[:, None]
+    reference = reference_trajectory(track, cutoff=2.0)
+    np.testing.assert_allclose(reference[20:-20], track.raw[20:-20], atol=0.2)
+
+
+@pytest.mark.parametrize("gap_type", ["confidence", "time"])
+def test_reference_filter_does_not_bridge_gaps(gap_type):
+    track, _ = lag_track()
+    track.raw[:] = standing()
+    if gap_type == "confidence":
+        track.confidence[145:155] = 0.0
+        track.raw[155:, :, 0] += 200
+    else:
+        track.time[150:] += 2.0
+        track.raw[150:, :, 0] += 200
+    reference = reference_trajectory(track, cutoff=2.0)
+    if gap_type == "confidence":
+        assert np.isnan(reference[145:155]).all()
+    valid = np.isfinite(reference)
+    np.testing.assert_allclose(reference[valid], track.raw[valid], atol=1e-8)
 
 
 @pytest.mark.parametrize("case", ["missing_reference", "stationary", "untracked", "missing_y", "short"])

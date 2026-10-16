@@ -17,6 +17,7 @@ from ..filtering import JointState
 from ..motion import MotionAnalyzer, MotionConfig, MotionEvent
 
 MIN_REFERENCE_RUN = 12  # frames; shorter runs of detections are too short to filter forward-backward
+MAX_GAP_PERIODS = 3.0  # longer sampling gaps split interpolation and differentiation
 
 
 @dataclass
@@ -62,15 +63,53 @@ def frame_period(time: np.ndarray) -> float:
     return float(np.median(np.diff(time)))
 
 
+def _sample_runs(time: np.ndarray, valid: np.ndarray, min_length: int = 2) -> list[slice]:
+    limit = MAX_GAP_PERIODS * frame_period(time) * (1 + 1e-9)
+    runs = []
+    for run in contiguous_runs(valid):
+        breaks = np.flatnonzero(np.diff(time[run]) > limit) + run.start + 1
+        bounds = [run.start, *breaks, run.stop]
+        runs.extend(slice(start, stop) for start, stop in zip(bounds, bounds[1:]) if stop - start >= min_length)
+    return runs
+
+
+def _uniform_time(time: np.ndarray) -> np.ndarray:
+    count = max(2, round((time[-1] - time[0]) / frame_period(time)) + 1)
+    return np.linspace(time[0], time[-1], count)
+
+
+def _interpolate(time: np.ndarray, points: np.ndarray, target: np.ndarray) -> np.ndarray:
+    return np.column_stack([np.interp(target, time, coordinate) for coordinate in points.T])
+
+
+def _resample(time: np.ndarray, points: np.ndarray, valid: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    sampled = np.full((len(grid), *points.shape[1:]), np.nan)
+    for joint in range(points.shape[1]):
+        observed = valid[:, joint] & np.isfinite(points[:, joint]).all(axis=1)
+        for run in _sample_runs(time, observed):
+            inside = (grid >= time[run.start]) & (grid <= time[run.stop - 1])
+            sampled[inside, joint] = _interpolate(time[run], points[run, joint], grid[inside])
+    return sampled
+
+
 def reference_trajectory(track: Track, cutoff: float = 6.0) -> np.ndarray:
     """Zero-phase 2nd-order Butterworth low-pass of each joint's raw trajectory, applied to runs of
-    consecutive detections; nan elsewhere."""
-    rate = 1.0 / frame_period(track.time)
-    b, a = butter(2, min(cutoff, 0.45 * rate) / (rate / 2))
+    consecutive detections on a uniform time grid, then sampled at the original timestamps."""
     reference = np.full_like(track.raw, np.nan)
+    if len(track.time) < MIN_REFERENCE_RUN:
+        return reference
     for joint in range(track.raw.shape[1]):
-        for run in contiguous_runs(track.confident[:, joint], MIN_REFERENCE_RUN):
-            reference[run, joint] = filtfilt(b, a, track.raw[run, joint], axis=0)
+        observed = track.confident[:, joint] & np.isfinite(track.raw[:, joint]).all(axis=1)
+        for run in _sample_runs(track.time, observed, MIN_REFERENCE_RUN):
+            time = track.time[run]
+            grid = _uniform_time(time)
+            if len(grid) < MIN_REFERENCE_RUN:
+                continue
+            rate = 1.0 / frame_period(grid)
+            b, a = butter(2, min(cutoff, 0.45 * rate) / (rate / 2))
+            sampled = _interpolate(time, track.raw[run, joint], grid)
+            filtered = filtfilt(b, a, sampled, axis=0)
+            reference[run, joint] = _interpolate(grid, filtered, time)
     return reference
 
 
@@ -128,12 +167,20 @@ def static_jitter(track: Track, mask: np.ndarray) -> tuple[np.ndarray, np.ndarra
 def acceleration_rms(track: Track, points: np.ndarray, valid: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Per joint RMS of the second time derivative in torso lengths/s², a jitter measure that also
     applies while moving: smooth motion has low acceleration, frame-to-frame noise has very high."""
-    dt = frame_period(track.time)
-    acceleration = (points[2:] - 2 * points[1:-1] + points[:-2]) / dt**2 / track.scale[1:-1, None, None]
-    ok = valid[2:] & valid[1:-1] & valid[:-2] & mask[1:-1, None] & np.isfinite(track.scale[1:-1, None])
-    squared = np.where(ok, np.sum(np.nan_to_num(acceleration) ** 2, axis=2), 0.0)
+    if len(track.time) < 3:
+        return np.full(points.shape[1], np.nan)
+    dt = np.diff(track.time)
+    interval = (dt[:-1] + dt[1:]) / 2
     with np.errstate(invalid="ignore", divide="ignore"):
-        return np.sqrt(squared.sum(axis=0) / ok.sum(axis=0))
+        velocity = np.diff(points, axis=0) / dt[:, None, None]
+        acceleration = np.diff(velocity, axis=0) / interval[:, None, None] / track.scale[1:-1, None, None]
+    ok = valid[2:] & valid[1:-1] & valid[:-2] & mask[1:-1, None] & np.isfinite(track.scale[1:-1, None])
+    regular = (dt > 0) & (dt <= MAX_GAP_PERIODS * frame_period(track.time) * (1 + 1e-9))
+    ok &= regular[:-1, None] & regular[1:, None] & np.isfinite(acceleration).all(axis=2)
+    squared = np.where(ok, np.sum(acceleration**2, axis=2), 0.0)
+    weights = np.where(ok, interval[:, None], 0.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.sqrt((squared * weights).sum(axis=0) / weights.sum(axis=0))
 
 
 def reference_error(track: Track, points: np.ndarray, valid: np.ndarray, reference: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -147,22 +194,24 @@ def reference_error(track: Track, points: np.ndarray, valid: np.ndarray, referen
 
 def lag(track: Track, reference: np.ndarray, max_lag: float = 0.3) -> float:
     """Delay in seconds of the filtered output behind the reference: the time shift that best aligns
-    them, refined to sub-frame precision with a parabola through the three best shifts.
+    them on a uniform time grid, refined with a parabola through the three best shifts.
     Returns nan when there is insufficient motion or no usable alignment."""
     if len(track.time) < 2:
         return np.nan
     dt = frame_period(track.time)
     if not np.isfinite(dt) or dt <= 0:
         return np.nan
-    position = track.position / track.scale[:, None, None]
-    target = reference / track.scale[:, None, None]
-    tracked = track.tracked
+    grid = _uniform_time(track.time)
+    dt = frame_period(grid)
+    position = _resample(track.time, track.position / track.scale[:, None, None], track.tracked, grid)
+    target = _resample(track.time, reference / track.scale[:, None, None], np.isfinite(reference).all(axis=2), grid)
+    tracked = np.isfinite(position).all(axis=2)
     observed = np.isfinite(target).all(axis=2)
     adjacent = observed[1:] & observed[:-1]
-    displacement = np.linalg.norm(np.diff(reference, axis=0), axis=2) / track.scale[1:, None]
+    displacement = np.linalg.norm(np.diff(target, axis=0), axis=2)
     if not np.any(adjacent & (displacement > 1e-6)):
         return np.nan
-    max_shift = min(int(max_lag / dt) + 1, len(track.time) - 1)
+    max_shift = min(int(max_lag / dt) + 1, len(grid) - 1)
     shifts = np.arange(-max_shift, max_shift + 1)
     errors = []
     for shift in shifts:
