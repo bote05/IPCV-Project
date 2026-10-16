@@ -1,8 +1,9 @@
 import numpy as np
+import pytest
 
 from Pose.filtering import JointState
 from Pose.motion import MotionAnalyzer
-from Pose.skeleton import NUM_JOINTS, Joint
+from Pose.skeleton import NUM_JOINTS, SHOULDERS, Joint
 
 from .poses import standing
 
@@ -82,3 +83,54 @@ def test_lost_shoulders_reset_discrete_outputs():
     signals = play(frames, states)
     assert signals[1].hand_raised[0] and signals[1].valid
     assert not signals[2].hand_raised[0] and not signals[2].valid
+
+
+@pytest.mark.parametrize("shoulder", SHOULDERS)
+def test_predicted_shoulders_cannot_trigger_pull(shoulder):
+    analyzer = MotionAnalyzer(NUM_JOINTS)
+    position = standing(left_wrist=(0.5, -1.0))
+    analyzer.update(position, np.zeros_like(position), TRACKED, 0.0)
+
+    predicted = position.copy()
+    predicted[shoulder, 1] -= 140
+    velocity = np.zeros_like(position)
+    velocity[shoulder, 1] = -600
+    state = TRACKED.copy()
+    state[shoulder] = JointState.PREDICTED
+    signals = analyzer.update(predicted, velocity, state, 0.1)
+
+    assert signals.valid
+    assert not events([signals], "pull")
+
+
+@pytest.mark.parametrize("shoulder", SHOULDERS)
+@pytest.mark.parametrize("initial_height,new_height", [(0.0, 1.0), (1.0, 0.0)])
+def test_predicted_shoulders_preserve_hand_raised_until_retracked(shoulder, initial_height, new_height):
+    frames = [standing(left_wrist=(0.5, -h)) for h in (initial_height, new_height, new_height)]
+    states = [TRACKED.copy() for _ in frames]
+    states[1][shoulder] = JointState.PREDICTED
+    signals = play(frames, states)
+
+    assert bool(signals[0].hand_raised[0]) == bool(initial_height)
+    assert signals[1].hand_raised[0] == signals[0].hand_raised[0]
+    assert bool(signals[2].hand_raised[0]) == bool(new_height)
+
+
+@pytest.mark.parametrize("shoulder", SHOULDERS)
+def test_shoulder_occlusion_resets_pull_anchor(shoulder):
+    analyzer = MotionAnalyzer(NUM_JOINTS)
+    raised = standing(left_wrist=(0.5, -1.0))
+    analyzer.update(raised, np.zeros_like(raised), TRACKED, 0.0)
+    state = TRACKED.copy()
+    state[shoulder] = JointState.PREDICTED
+    analyzer.update(raised, np.zeros_like(raised), state, DT)
+
+    lowered = standing(left_wrist=(0.5, 0.0))
+    velocity = np.zeros_like(raised)
+    velocity[Joint.LEFT_WRIST, 1] = 300
+    recovered = analyzer.update(lowered, velocity, TRACKED, 2 * DT)
+    assert not events([recovered], "pull")
+
+    analyzer.update(raised, np.zeros_like(raised), TRACKED, 3 * DT)
+    fresh_pull = analyzer.update(lowered, velocity, TRACKED, 4 * DT)
+    assert len(events([fresh_pull], "pull")) == 1

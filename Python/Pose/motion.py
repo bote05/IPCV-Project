@@ -172,6 +172,7 @@ class MotionAnalyzer:
 
     def _update_arms(self, usable: np.ndarray, confirmed: np.ndarray) -> None:
         cfg = self.config
+        shoulders_tracked = confirmed[list(SHOULDERS)].all()
         for i, (shoulder, elbow, wrist) in enumerate(zip(SHOULDERS, ELBOWS, WRISTS)):
             if usable[[shoulder, elbow, wrist]].all():
                 upper = np.linalg.norm(self._body[elbow] - self._body[shoulder])
@@ -179,7 +180,7 @@ class MotionAnalyzer:
                 reach = np.linalg.norm(self._body[wrist] - self._body[shoulder])
                 self._arm_extension[i] = reach / max(upper + lower, 1e-6)
 
-            if confirmed[wrist]:
+            if shoulders_tracked and confirmed[wrist]:
                 threshold = cfg.raise_off if self._hand_raised[i] else cfg.raise_on
                 self._hand_raised[i] = self._body[wrist, 1] > threshold
             elif not usable[wrist]:
@@ -191,8 +192,9 @@ class MotionAnalyzer:
         when it starts descending; the travel below the anchor is the stroke length."""
         cfg = self.config
         events = []
+        shoulders_tracked = confirmed[list(SHOULDERS)].all()
         for i, (side, wrist) in enumerate(zip(SIDES, WRISTS)):
-            if not confirmed[wrist]:
+            if not shoulders_tracked or not confirmed[wrist]:
                 self._pull_anchor[i] = np.nan
                 continue
             height, vertical_speed = self._body[wrist, 1], self._body_velocity[wrist, 1]
