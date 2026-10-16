@@ -8,6 +8,7 @@ from Pose.evaluation.experiments import accuracy
 from Pose.evaluation.metrics import Track, acceleration_rms, contiguous_runs, lag, match_events, reference_trajectory
 from Pose.evaluation.recording import FrameRecord, RecordingWriter, load_recording
 from Pose.evaluation.replay import Analysis, replay, weighted_lag
+from Pose.evaluation.report import write_json
 from Pose.filtering import JointState
 from Pose.motion import MotionEvent
 from Pose.skeleton import JOINT_NAMES, NUM_JOINTS
@@ -196,3 +197,29 @@ def test_accuracy_matches_each_detection_to_only_one_person(tmp_path, reverse, d
         assert metrics["pck_raw"] == 0.5
         assert metrics["pck_filtered"] == 0.5
         assert metrics["median_error_px"] == pytest.approx(15.0 if both_matched else 0.0)
+
+
+def test_json_output_is_standard_with_unavailable_measurements_as_null(tmp_path):
+    path = tmp_path / "out.json"
+    data = {
+        "lag_ms": np.nan,
+        "fps_low": np.float64(np.inf),
+        "joints": {"nose": {"annotated": np.int64(3), "pck_raw": np.float32(0.5), "seen": np.bool_(True)}},
+        "per_joint": np.array([0.25, np.nan, -np.inf]),
+        "image_size": (640, 480),
+        "events": [{"median_delay_ms": None}],
+    }
+    write_json(str(path), data)
+
+    def reject(constant):
+        raise ValueError(f"nonstandard JSON constant {constant}")
+
+    assert json.loads(path.read_text(encoding="utf-8"), parse_constant=reject) == {
+        "lag_ms": None,
+        "fps_low": None,
+        "joints": {"nose": {"annotated": 3, "pck_raw": 0.5, "seen": True}},
+        "per_joint": [0.25, None, None],
+        "image_size": [640, 480],
+        "events": [{"median_delay_ms": None}],
+    }
+    assert np.isnan(data["lag_ms"]) and np.isnan(data["per_joint"][1])

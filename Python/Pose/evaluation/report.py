@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -153,13 +154,20 @@ def plot_dropout(rows: list[dict], path: Path) -> None:
 
 
 def write_json(path: str | None, data) -> None:
+    """Write standard JSON; unavailable measurements (nan, inf) become null."""
     if path:
-        Path(path).write_text(json.dumps(data, indent=2, default=_to_builtin), encoding="utf-8")
+        Path(path).write_text(json.dumps(_to_builtin(data), indent=2, allow_nan=False), encoding="utf-8")
 
 
 def _to_builtin(value):
+    if isinstance(value, dict):
+        return {key: _to_builtin(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_builtin(item) for item in value]
     if isinstance(value, np.ndarray):
-        return value.tolist()
+        return _to_builtin(value.tolist())
     if isinstance(value, np.generic):
-        return value.item()
-    raise TypeError(type(value))
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
