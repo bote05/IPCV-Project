@@ -13,7 +13,9 @@ namespace IPCV.Bridge
         private readonly UdpClient client;
         private readonly Thread thread;
         private readonly Queue<Packet> queue = new Queue<Packet>();
-        private readonly int maxBytes, capacity;
+        // macOS refuses UDP packets above 9216 bytes; Python keeps both channels under it.
+        public const int MaxPacketBytes = 9216;
+        private readonly int capacity;
         private volatile bool stopping;
         private long received, drops;
         private string error;
@@ -21,10 +23,9 @@ namespace IPCV.Bridge
         public long Drops => Interlocked.Read(ref drops);
         public string Error => Volatile.Read(ref error);
 
-        public UdpInbox(int port, int maxBytes, int capacity)
+        public UdpInbox(int port, int capacity)
         {
             if (port < 1 || port > 65535) throw new ArgumentOutOfRangeException("port");
-            this.maxBytes = maxBytes;
             this.capacity = capacity;
             client = new UdpClient(AddressFamily.InterNetwork);
             try
@@ -47,7 +48,7 @@ namespace IPCV.Bridge
                 {
                     byte[] bytes = client.Receive(ref source);
                     Interlocked.Increment(ref received);
-                    if (bytes.Length == 0 || bytes.Length > maxBytes) { Interlocked.Increment(ref drops); continue; }
+                    if (bytes.Length == 0 || bytes.Length > MaxPacketBytes) { Interlocked.Increment(ref drops); continue; }
                     var packet = new Packet { bytes = bytes, receiptSeconds = BridgeClock.Now() };
                     lock (queue)
                     {
