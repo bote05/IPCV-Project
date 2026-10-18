@@ -76,7 +76,7 @@ Empty means unknown, so don't send 0 for missing data. The pose adapter keeps sh
 
 Event IDs increase for the lifetime of the tracker. Keep one tracker for each Python sender session. Unity deduplicates per player and session, including across temporary player loss. The 200 ms repetition reduces loss; a longer outage can still miss an event. Pose defines event names and their meaning; the bridge validates the data without restricting names. Currently Pose emits pulls and jumps. Strength is stroke distance for pulls or upward speed for jumps. Game cooldowns belong in Unity.
 
-A face packet is the text `IPCF`, the session id, the player id, a counter and then the JPEG bytes.
+A face packet is the text `IPCF`, the session id, the player id, a counter and then the JPEG bytes. Every packet must stay under 9216 bytes because macOS refuses bigger ones, so keep each JPEG under `bridge.face.MAX_FACE_JPEG_BYTES` (about 9 KB; for a 256x256 face, quality 75 fits and 80 is already too big).
 
 ## Coordinates and remaining team agreements
 

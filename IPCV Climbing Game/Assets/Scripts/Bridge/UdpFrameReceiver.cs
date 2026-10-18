@@ -51,7 +51,7 @@ namespace IPCV.Bridge
             try
             {
                 stream = new TrackingFrameStream(staleAfterSeconds, Environment.OSVersion.Platform == PlatformID.Win32NT);
-                inbox = new UdpInbox(port, 16384, 32);
+                inbox = new UdpInbox(port, 32);
             }
             catch (Exception e)
             {

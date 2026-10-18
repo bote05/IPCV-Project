@@ -9,9 +9,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 from bridge.demo import demo_players
-from bridge.face import encode_face, FACE_HEADER
+from bridge.face import encode_face, FACE_HEADER, MAX_FACE_JPEG_BYTES
 from bridge.pipeline import TrackingResult, player_from_pose
-from bridge.protocol import Joint, JointState, Landmark, MotionEvent, PlayerState, encode_frame
+from bridge.protocol import MAX_PACKET_BYTES, Joint, JointState, Landmark, MotionEvent, PlayerState, encode_frame
 from bridge.sender import UdpSender
 import main
 
@@ -94,7 +94,7 @@ class ProtocolTests(unittest.TestCase):
             self.encode([PlayerState(1, False, events=(pull,))])
 
     def test_tracking_size_limit(self):
-        self.assertLess(len(self.encode(demo_players(0))), 16384)
+        self.assertLess(len(self.encode(demo_players(0))), MAX_PACKET_BYTES)
         with patch("bridge.protocol.MAX_PACKET_BYTES", 100), self.assertRaises(ValueError):
             self.encode(demo_players(0))
 
