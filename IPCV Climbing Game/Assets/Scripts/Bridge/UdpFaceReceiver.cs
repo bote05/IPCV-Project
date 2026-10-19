@@ -33,7 +33,7 @@ namespace IPCV.Bridge
             try
             {
                 if (port == tracking.Port) throw new ArgumentException("Face and tracking ports must differ");
-                inbox = new UdpInbox(port, 60000, 4);
+                inbox = new UdpInbox(port, 4);
             }
             catch (Exception e) { LastError = e.Message; Debug.LogError("Face bridge: " + LastError, this); enabled = false; }
         }

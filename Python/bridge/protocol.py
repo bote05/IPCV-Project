@@ -7,7 +7,8 @@ import math
 import string
 from typing import Iterable
 
-MAX_PACKET_BYTES = 16_384
+# macOS refuses UDP packets above 9216 bytes, so both channels stay under that.
+MAX_PACKET_BYTES = 9_216
 
 
 class Joint(IntEnum):
