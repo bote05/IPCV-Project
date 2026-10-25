@@ -1,0 +1,4 @@
+{
+  "name": "IPCV.Game",
+  "references": ["IPCV.Bridge", "Unity.InputSystem", "Unity.TextMeshPro", "Unity.ugui"]
+}

@@ -1,4 +1,7 @@
 ﻿<Solution>
-  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Assembly-CSharp.csproj" />
+  <Project Path="IPCV.Game.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="IPCV.Bridge.Tests.csproj" />
+  <Project Path="IPCV.Bridge.csproj" />
 </Solution>
