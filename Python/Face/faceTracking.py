@@ -1,11 +1,21 @@
-"""Face detection + player identification, plugged into main.py as a frame processor.
+"""Task 1: face detection, smoothing and 256x256 face crops.
 
-Run from the repository root:
-    python Python/main.py --webcam --processor Face.faceTracking:process_frame
+    face = FaceTracker()
+    for frame, t in camera:                 # BGR frame, capture time in seconds
+        faces = face.process(frame, t)      # list[FaceObservation]
+    face.close()
+
+Every visible face is returned, smoothed with a One Euro filter per face. A face that stops being
+detected is still returned (detected=False, last box and JPEG) for FACE_TIMEOUT_S, then dropped.
+This module does not decide who is player 1 or 2: it returns template-match scores as a hint
+for Identity.
 """
 
-import atexit
+from __future__ import annotations
+
 import math
+from dataclasses import dataclass, field
+from itertools import count
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -15,76 +25,95 @@ import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-from bridge.pipeline import TrackingResult
-from bridge.protocol import PlayerState
+from bridge.face import MAX_FACE_JPEG_BYTES
+from Pose.filtering import OneEuroFilter
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-MODEL_PATH = str(Path(__file__).with_name('detector.tflite'))  # works from any cwd
+MODELS_DIR = Path(__file__).resolve().parents[2] / 'Models'
+MODEL_PATH = MODELS_DIR / 'blaze_face_short_range.tflite'   # python -m Face.download_model
 
-NUM_PLAYERS = 2
-TEMPLATE_SIZE = (64, 64)       # faces are resized to this before comparing
-MATCH_THRESHOLD = 0.3          # min similarity (-1..1) to accept a match
 FACE_JPEG_SIZE = (256, 256)    # what Unity expects (see bridge/README.md)
-JPEG_QUALITY = 85             # starting quality; lowered if the JPEG is too big
+JPEG_QUALITIES = range(85, 9, -5)   # tried in order until the JPEG fits MAX_FACE_JPEG_BYTES
 
-# Operating system this runs on: 'windows' or 'mac'.
-# macOS can only send UDP packets up to 9216 bytes, so on 'mac' the face JPEGs
-# are compressed harder to fit. Windows allows the bridge's full 60 KB.
-PLATFORM = 'mac'
-MAX_JPEG_BYTES = {
-    'windows': 60_000 - 45,   # bridge limit minus the 45-byte face header
-    'mac': 9_216 - 45,        # macOS UDP limit minus the 45-byte face header
-}
-if PLATFORM not in MAX_JPEG_BYTES:
-    raise ValueError(f"PLATFORM must be 'windows' or 'mac', not {PLATFORM!r}")
-SHOW_DEBUG_WINDOWS = True      # main.py's waitKey keeps these windows updating
+FACE_TIMEOUT_S = 0.5           # a face is dropped after this long without a detection
+MIN_MATCH_IOU = 0.3            # min box overlap to treat a detection as the same face
 
-MARGIN = 10          # pixels
-ROW_SIZE = 10        # pixels
-FONT_SIZE = 1.5
+# One Euro filter on (centre x, centre y, width, height) in pixels.
+# Speed is measured in face widths per second, so the filter behaves the same at any distance.
+FILTER_MIN_CUTOFF = 1.0        # Hz at rest; lower removes more jitter
+FILTER_BETA = 1.0              # Hz added per face width/s; higher reduces lag during motion
+FILTER_D_CUTOFF = 1.0          # Hz, smoothing of the speed estimate
+MIN_DT = 1e-3
+
+NUM_TEMPLATES = 2
+TEMPLATE_SIZE = (64, 64)       # faces are resized to this before comparing
+
+# Debug drawing (only used when FaceTracker(debug=True))
+MARGIN = 10
+ROW_SIZE = 10
+FONT_SIZE = 1.2
 FONT_THICKNESS = 2
-PLAYER_COLORS = [(255, 128, 0), (0, 0, 255)]   # player 1 blue, player 2 red (BGR)
-UNKNOWN_COLOR = (200, 200, 200)                # grey
-KEYPOINT_COLOR = (0, 255, 0)                   # green
+DETECTED_COLOR = (0, 200, 0)   # green (BGR)
+HELD_COLOR = (160, 160, 160)   # grey
+KEYPOINT_COLOR = (0, 255, 255)
+
+_ROW = np.array([True])        # OneEuroFilter works on rows of an array; a face is one row
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FaceObservation:
+    """One face in one frame.
+
+    bbox: (x, y, width, height) normalized to the image size, origin top left, NOT mirrored.
+          Smoothed, and clipped to the image.
+    jpeg: 256x256 face crop, at most MAX_FACE_JPEG_BYTES; None if it could not be made small enough.
+    template_scores: similarity (-1..1) to template 0 and template 1, or None until both
+          templates exist. Template 0 is the face that was on the left of the camera image when
+          the templates were captured, template 1 the one on the right. Higher = more similar.
+    detected: True if the detector saw this face in this frame; False while it is being held
+          after a missed detection (box, JPEG and scores are then from the last detection).
+    track_id: stays the same for the same face across frames; a new id after the face is dropped.
+          This is not a player id.
+    """
+
+    track_id: int
+    bbox: Tuple[float, float, float, float]
+    jpeg: Optional[bytes]
+    template_scores: Optional[Tuple[float, float]]
+    detected: bool
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _normalized_to_pixel_coordinates(
-        normalized_x: float, normalized_y: float,
-        image_width: int, image_height: int) -> Optional[Tuple[int, int]]:
-    """Converts a normalized (0..1) coordinate pair to pixel coordinates."""
-
-    def is_valid(value: float) -> bool:
-        return (value > 0 or math.isclose(0, value)) and \
-               (value < 1 or math.isclose(1, value))
-
-    if not (is_valid(normalized_x) and is_valid(normalized_y)):
-        return None
-    x_px = min(math.floor(normalized_x * image_width), image_width - 1)
-    y_px = min(math.floor(normalized_y * image_height), image_height - 1)
-    return x_px, y_px
+def model_missing_message() -> str:
+    return (f'Face model not found at {MODEL_PATH}. '
+            'Download it from the Python folder with: python -m Face.download_model')
 
 
-def clamp_bbox(bbox, width: int, height: int) -> Tuple[int, int, int, int]:
-    """Returns (x1, y1, x2, y2) clipped to the image so slicing never wraps."""
-    x1 = max(bbox.origin_x, 0)
-    y1 = max(bbox.origin_y, 0)
-    x2 = min(bbox.origin_x + bbox.width, width)
-    y2 = min(bbox.origin_y + bbox.height, height)
+def iou(a: np.ndarray, b: np.ndarray) -> float:
+    """Overlap of two (cx, cy, w, h) boxes, 0..1."""
+    ax1, ay1, ax2, ay2 = a[0] - a[2] / 2, a[1] - a[3] / 2, a[0] + a[2] / 2, a[1] + a[3] / 2
+    bx1, by1, bx2, by2 = b[0] - b[2] / 2, b[1] - b[3] / 2, b[0] + b[2] / 2, b[1] + b[3] / 2
+    w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = w * h
+    union = a[2] * a[3] + b[2] * b[3] - inter
+    return inter / union if union > 0 else 0.0
+
+
+def clip_box(box: np.ndarray, width: int, height: int) -> Tuple[int, int, int, int]:
+    """(cx, cy, w, h) in pixels -> integer (x1, y1, x2, y2) inside the image."""
+    x1 = int(round(max(box[0] - box[2] / 2, 0)))
+    y1 = int(round(max(box[1] - box[3] / 2, 0)))
+    x2 = int(round(min(box[0] + box[2] / 2, width)))
+    y2 = int(round(min(box[1] + box[3] / 2, height)))
     return x1, y1, x2, y2
-
-
-def crop_face(frame: np.ndarray, bbox) -> Optional[np.ndarray]:
-    """Cuts the face out of the frame. Returns None if the box is empty."""
-    height, width = frame.shape[:2]
-    x1, y1, x2, y2 = clamp_bbox(bbox, width, height)
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return frame[y1:y2, x1:x2].copy()
 
 
 def make_template(face_crop: np.ndarray) -> np.ndarray:
@@ -96,182 +125,194 @@ def make_template(face_crop: np.ndarray) -> np.ndarray:
 
 def similarity(template_a: np.ndarray, template_b: np.ndarray) -> float:
     """Normalized correlation between two same-size templates (-1..1)."""
-    return float(cv2.matchTemplate(template_a, template_b,
-                                   cv2.TM_CCOEFF_NORMED)[0][0])
+    return float(cv2.matchTemplate(template_a, template_b, cv2.TM_CCOEFF_NORMED)[0][0])
 
 
-def assign_players(face_templates: List[np.ndarray],
-                   player_templates: List[np.ndarray]) -> List[Optional[int]]:
-    """Matches each detected face to a player index (or None).
-
-    All face/player pairs are scored, then the best pairs are taken first,
-    so two faces can never be assigned to the same player.
-    """
-    scores = []
-    for f, face_t in enumerate(face_templates):
-        for p, player_t in enumerate(player_templates):
-            scores.append((similarity(face_t, player_t), f, p))
-    scores.sort(reverse=True)
-
-    assignment: List[Optional[int]] = [None] * len(face_templates)
-    used_players = set()
-    for score, f, p in scores:
-        if score < MATCH_THRESHOLD:
-            break
-        if assignment[f] is None and p not in used_players:
-            assignment[f] = p
-            used_players.add(p)
-    return assignment
-
-
-def encode_jpeg(image: np.ndarray) -> bytes:
-    """Encodes as JPEG, lowering quality until it fits in one UDP packet on PLATFORM."""
-    max_bytes = MAX_JPEG_BYTES[PLATFORM]
-    for quality in range(JPEG_QUALITY, 9, -10):
+def encode_jpeg(image: np.ndarray) -> Optional[bytes]:
+    """Encodes as JPEG, lowering quality until it fits one face packet. None if it never fits."""
+    for quality in JPEG_QUALITIES:
         ok, buf = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, quality])
-        if not ok:
-            raise RuntimeError('JPEG encoding failed')
-        if buf.size <= max_bytes:
-            break
-    return buf.tobytes()
+        if ok and buf.size <= MAX_FACE_JPEG_BYTES:
+            return buf.tobytes()
+    return None
 
 
-def mirrored_normalized_bbox(x1: int, y1: int, x2: int, y2: int,
-                             width: int, height: int) -> Tuple[float, float, float, float]:
-    """Pixel box -> (x, y, w, h) normalized to the image, mirrored for Unity's display."""
-    x, y = x1 / width, y1 / height
-    w, h = (x2 - x1) / width, (y2 - y1) / height
-    return (1 - x - w, y, w, h)
-
-
-def visualize(image: np.ndarray, detections,
-              assignment: List[Optional[int]]) -> np.ndarray:
-    """Shows only the detected faces on a black background, labelled by player."""
-    height, width, _ = image.shape
-    annotated = np.zeros_like(image)
-
-    for detection, player in zip(detections, assignment):
-        x1, y1, x2, y2 = clamp_bbox(detection.bounding_box, width, height)
-        color = PLAYER_COLORS[player] if player is not None else UNKNOWN_COLOR
-
-        annotated[y1:y2, x1:x2] = image[y1:y2, x1:x2]
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
-
-        for keypoint in detection.keypoints:
-            keypoint_px = _normalized_to_pixel_coordinates(
-                keypoint.x, keypoint.y, width, height)
-            if keypoint_px is not None:
-                cv2.circle(annotated, keypoint_px, 2, KEYPOINT_COLOR, 2)
-
-        label = f'Player {player + 1}' if player is not None else 'Unknown'
-        cv2.putText(annotated, label, (x1 + MARGIN, y1 + MARGIN + ROW_SIZE),
-                    cv2.FONT_HERSHEY_PLAIN, FONT_SIZE, color, FONT_THICKNESS)
-
-    return annotated
-
-
-def create_detector() -> vision.FaceDetector:
-    base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-    options = vision.FaceDetectorOptions(
-        base_options=base_options,
-        running_mode=vision.RunningMode.VIDEO)
-    return vision.FaceDetector.create_from_options(options)
+def _normalized_to_pixel(x: float, y: float, width: int, height: int) -> Optional[Tuple[int, int]]:
+    if not (0 <= x <= 1 and 0 <= y <= 1):
+        return None
+    return min(math.floor(x * width), width - 1), min(math.floor(y * height), height - 1)
 
 
 # ---------------------------------------------------------------------------
-# Frame processor
+# Face tracks
 # ---------------------------------------------------------------------------
+@dataclass
+class _Track:
+    track_id: int
+    filter: OneEuroFilter
+    last_update_s: float
+    last_detected_s: float
+    jpeg: Optional[bytes] = None
+    template: Optional[np.ndarray] = None
+    scores: Optional[Tuple[float, float]] = None
+    detected: bool = True
+    keypoints: list = field(default_factory=list)
+
+    @property
+    def box(self) -> np.ndarray:
+        """Smoothed (cx, cy, w, h) in pixels."""
+        return self.filter.value[0]
+
+
 class FaceTracker:
-    """Keeps the detector and player templates alive between frames."""
+    """Keeps the detector, face tracks and templates alive between frames."""
 
-    def __init__(self) -> None:
-        self.detector = create_detector()
-        self.player_templates: Optional[List[np.ndarray]] = None
-        # Last detected face of each player (index 0 = player 1).
-        # Kept when the player is not detected; None until first seen.
-        self.players: List[Optional[np.ndarray]] = [None] * NUM_PLAYERS
-        self._last_jpegs: List[Optional[bytes]] = [None] * NUM_PLAYERS
-        self._last_bboxes: List[Optional[Tuple[float, float, float, float]]] = [None] * NUM_PLAYERS
+    def __init__(self, debug: bool = False) -> None:
+        if not MODEL_PATH.is_file():
+            raise FileNotFoundError(model_missing_message())
+        options = vision.FaceDetectorOptions(
+            base_options=python.BaseOptions(model_asset_path=str(MODEL_PATH)),
+            running_mode=vision.RunningMode.VIDEO)
+        self._detector = vision.FaceDetector.create_from_options(options)
+        self.debug = debug
+        self.templates: Optional[List[np.ndarray]] = None
+        self._tracks: List[_Track] = []
+        self._ids = count(1)
         self._last_timestamp_ms = -1
 
+    # -- public -------------------------------------------------------------
+    def process(self, frame_bgr: np.ndarray, t: float) -> List[FaceObservation]:
+        """Detects, smooths and crops the faces in one frame.
+
+        frame_bgr: normal (unmirrored) camera image. t: capture time in seconds, increasing.
+        """
+        height, width = frame_bgr.shape[:2]
+        detections = self._detect(frame_bgr, t)
+        self._update_tracks(detections, t)
+
+        for track in self._tracks:
+            if track.detected:
+                self._refresh_crop(track, frame_bgr)
+        self._capture_templates()
+        self._score()
+
+        if self.debug:
+            cv2.imshow('Face tracking', self._draw(frame_bgr))
+
+        return [self._observation(track, width, height) for track in self._tracks]
+
     def reset_templates(self) -> None:
-        self.player_templates = None
-        self.players = [None] * NUM_PLAYERS
-        self._last_jpegs = [None] * NUM_PLAYERS
-        self._last_bboxes = [None] * NUM_PLAYERS
+        """Forget both templates; new ones are captured the next time exactly two faces are seen."""
+        self.templates = None
+        for track in self._tracks:
+            track.scores = None
 
     def close(self) -> None:
-        self.detector.close()
+        self._detector.close()
 
-    def process(self, frame_bgr: np.ndarray, captured_time_s: float) -> TrackingResult:
-        height, width = frame_bgr.shape[:2]
+    def __enter__(self) -> 'FaceTracker':
+        return self
 
-        # MediaPipe expects RGB and strictly increasing timestamps in ms
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    # -- steps ----------------------------------------------------------------
+    def _detect(self, frame_bgr: np.ndarray, t: float) -> List[Tuple[np.ndarray, list]]:
+        """Raw detections as ((cx, cy, w, h) in pixels, keypoints)."""
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        timestamp_ms = max(int(captured_time_s * 1000), self._last_timestamp_ms + 1)
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        timestamp_ms = max(int(t * 1000), self._last_timestamp_ms + 1)   # must strictly increase
         self._last_timestamp_ms = timestamp_ms
-        result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        result = self._detector.detect_for_video(image, timestamp_ms)
 
-        # Keep only detections that produce a usable crop
-        detections, crops = [], []
+        detections = []
         for detection in result.detections:
-            crop = crop_face(frame_bgr, detection.bounding_box)
-            if crop is not None:
-                detections.append(detection)
-                crops.append(crop)
+            b = detection.bounding_box
+            if b.width > 0 and b.height > 0:
+                box = np.array([b.origin_x + b.width / 2, b.origin_y + b.height / 2,
+                                b.width, b.height], dtype=float)
+                detections.append((box, list(detection.keypoints)))
+        return detections
 
-        # Capture templates the first time exactly two faces are visible.
-        # Sorted left to right in the camera image: left = player 1, right = player 2.
-        if self.player_templates is None and len(crops) == NUM_PLAYERS:
-            order = sorted(range(len(crops)),
-                           key=lambda i: detections[i].bounding_box.origin_x)
-            self.player_templates = [make_template(crops[i]) for i in order]
-            print('Player templates captured.')
-
-        if self.player_templates is not None:
-            assignment = assign_players([make_template(c) for c in crops],
-                                        self.player_templates)
-        else:
-            assignment = [None] * len(detections)
-
-        # Update the stored face of every player detected this frame
-        for detection, crop, index in zip(detections, crops, assignment):
-            if index is None:
+    def _update_tracks(self, detections: List[Tuple[np.ndarray, list]], t: float) -> None:
+        """Matches detections to tracks by overlap, filters matched boxes, starts and drops tracks."""
+        pairs = sorted(((iou(box, track.box), d, k)
+                        for d, (box, _) in enumerate(detections)
+                        for k, track in enumerate(self._tracks)), reverse=True)
+        matched_detections, matched_tracks = set(), set()
+        for overlap, d, k in pairs:
+            if overlap < MIN_MATCH_IOU:
+                break
+            if d in matched_detections or k in matched_tracks:
                 continue
-            face = cv2.resize(crop, FACE_JPEG_SIZE)
-            x1, y1, x2, y2 = clamp_bbox(detection.bounding_box, width, height)
-            self.players[index] = face
-            self._last_jpegs[index] = encode_jpeg(face)
-            self._last_bboxes[index] = mirrored_normalized_bbox(x1, y1, x2, y2, width, height)
+            matched_detections.add(d)
+            matched_tracks.add(k)
+            track, (box, keypoints) = self._tracks[k], detections[d]
+            dt = max(t - track.last_update_s, MIN_DT)
+            track.filter.update(box[None, :], dt, _ROW, scale=max(track.box[2], 1.0))
+            track.last_update_s = track.last_detected_s = t
+            track.detected, track.keypoints = True, keypoints
 
-        # Send every player seen at least once: the current face if detected,
-        # otherwise the last one. (main.py only sends faces for players listed
-        # as tracked with a face_bbox, so the last bbox is sent along too.)
-        states, face_jpegs = [], {}
-        for index in range(NUM_PLAYERS):
-            if self._last_jpegs[index] is None:
-                continue
-            player_id = index + 1                      # bridge uses IDs 1 and 2
-            states.append(PlayerState(player_id, True, face_bbox=self._last_bboxes[index]))
-            face_jpegs[player_id] = self._last_jpegs[index]
+        for k, track in enumerate(self._tracks):
+            if k not in matched_tracks:
+                track.detected = False
+        self._tracks = [track for track in self._tracks
+                        if track.detected or t - track.last_detected_s <= FACE_TIMEOUT_S]
 
-        if SHOW_DEBUG_WINDOWS:
-            cv2.imshow('Face Detection', visualize(frame_bgr, detections, assignment))
-            for i, face in enumerate(self.players):
-                if face is not None:
-                    cv2.imshow(f'Player {i + 1}', face)
+        for d, (box, keypoints) in enumerate(detections):
+            if d not in matched_detections:
+                euro = OneEuroFilter((1, 4), FILTER_MIN_CUTOFF, FILTER_BETA, FILTER_D_CUTOFF)
+                euro.set(_ROW, box)
+                self._tracks.append(_Track(next(self._ids), euro, t, t, keypoints=keypoints))
 
-        return TrackingResult(players=tuple(states), face_jpegs=face_jpegs)
+    def _refresh_crop(self, track: _Track, frame_bgr: np.ndarray) -> None:
+        """New JPEG and template from the smoothed box. A crop that is too big is skipped (None)."""
+        height, width = frame_bgr.shape[:2]
+        x1, y1, x2, y2 = clip_box(track.box, width, height)
+        if x2 <= x1 or y2 <= y1:
+            return
+        crop = frame_bgr[y1:y2, x1:x2]
+        track.jpeg = encode_jpeg(cv2.resize(crop, FACE_JPEG_SIZE))
+        track.template = make_template(crop)
 
+    def _capture_templates(self) -> None:
+        """The first time exactly two faces are detected, store them left to right."""
+        if self.templates is not None:
+            return
+        visible = [track for track in self._tracks if track.detected and track.template is not None]
+        if len(visible) == NUM_TEMPLATES:
+            visible.sort(key=lambda track: track.box[0])
+            self.templates = [track.template for track in visible]
 
-_tracker: Optional[FaceTracker] = None
+    def _score(self) -> None:
+        if self.templates is None:
+            return
+        for track in self._tracks:
+            if track.detected and track.template is not None:
+                track.scores = tuple(similarity(track.template, template)
+                                     for template in self.templates)
 
+    def _observation(self, track: _Track, width: int, height: int) -> FaceObservation:
+        x1, y1, x2, y2 = clip_box(track.box, width, height)
+        bbox = (x1 / width, y1 / height, max(x2 - x1, 0) / width, max(y2 - y1, 0) / height)
+        return FaceObservation(track.track_id, bbox, track.jpeg, track.scores, track.detected)
 
-def process_frame(frame_bgr: np.ndarray, captured_time_s: float) -> TrackingResult:
-    """Entry point for main.py: --processor Face.faceTracking:process_frame"""
-    global _tracker
-    if _tracker is None:
-        _tracker = FaceTracker()
-        atexit.register(_tracker.close)
-    return _tracker.process(frame_bgr, captured_time_s)
+    def _draw(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """Debug view: only the face regions on black, with track id and template scores."""
+        height, width = frame_bgr.shape[:2]
+        canvas = np.zeros_like(frame_bgr)
+        for track in self._tracks:
+            x1, y1, x2, y2 = clip_box(track.box, width, height)
+            color = DETECTED_COLOR if track.detected else HELD_COLOR
+            canvas[y1:y2, x1:x2] = frame_bgr[y1:y2, x1:x2]
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+            for keypoint in track.keypoints:
+                point = _normalized_to_pixel(keypoint.x, keypoint.y, width, height)
+                if point is not None:
+                    cv2.circle(canvas, point, 2, KEYPOINT_COLOR, 2)
+            label = f'#{track.track_id}'
+            if track.scores is not None:
+                label += f' {track.scores[0]:.2f}/{track.scores[1]:.2f}'
+            cv2.putText(canvas, label, (x1 + MARGIN, y1 + MARGIN + ROW_SIZE),
+                        cv2.FONT_HERSHEY_PLAIN, FONT_SIZE, color, FONT_THICKNESS)
+        return canvas
