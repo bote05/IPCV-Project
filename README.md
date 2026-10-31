@@ -101,6 +101,7 @@ IPCV-Project/
         │   ├── Interaction/     # Task 4: ClimberInput, ClimberBody, ClimbingHold, ClimberFace, HUD, camera
         │   └── Bridge/          # Task 5: UDP receivers, metrics CSV, debug panel, tests
         ├── Art/                 # climber models (Quaternius, CC0)
+        ├── Resources/Music/     # background music: "Sprite Sprint" from Super 16-Bit Sounds (Dylann Taylor, CC0)
         ├── Materials/, Fonts/, Settings/
         └── TextMesh Pro/        # TMP essentials
 ```
