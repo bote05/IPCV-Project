@@ -57,3 +57,25 @@ class PositionEstimator:
                 positions[player_pose.id] = position
 
         return positions
+
+    def test_distance(self, player_poses, known_distance):
+        results = {}
+        for player_pose in player_poses:
+            if player_pose.id is None:
+                continue
+
+            estimated_position = self.estimate(player_pose)
+
+            if estimated_position is None:
+                continue
+
+            estimated_distance = estimated_position[2]
+            absolute_error = abs(estimated_distance-known_distance)
+            percentage_error = (absolute_error/known_distance)
+            results[player_pose.id] = {
+            "actual_distance": known_distance,
+            "estimated_distance": estimated_distance,
+            "absolute_error": absolute_error,
+            "percentage_error": percentage_error
+            }
+        return results
