@@ -41,7 +41,7 @@ namespace IPCV.Bridge
             if (frame == null) GUILayout.Label("No fresh tracking. Run: python Python/main.py --demo");
             else
             {
-                GUILayout.Label($"Frame {frame.sequence} | Python processing {frame.ProcessingMs:F3} ms");
+                GUILayout.Label($"Frame {frame.sequence} | Capture to send {frame.CaptureToSendMs:F3} ms");
                 GUILayout.Label($"Receive -> apply {receiver.ReceiveToApplyMs:F3} ms");
                 if (!double.IsNaN(receiver.CaptureToApplyMs))
                     GUILayout.Label($"Encode + UDP {receiver.EncodeAndUdpMs:F3} ms | capture -> apply {receiver.CaptureToApplyMs:F3} ms");

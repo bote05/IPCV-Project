@@ -46,7 +46,7 @@ namespace IPCV.Bridge
                 RecordingPath = Path.Combine(Application.persistentDataPath,
                     "bridge-metrics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".csv");
                 csv = new StreamWriter(RecordingPath);
-                csv.WriteLine("time_s,session,sequence,processing_ms,encode_udp_ms,receive_apply_ms,capture_apply_ms,tracking_fps,unity_fps,sequence_gaps,queue_drops,invalid_json");
+                csv.WriteLine("time_s,session,sequence,capture_to_send_ms,encode_udp_ms,receive_apply_ms,capture_apply_ms,tracking_fps,unity_fps,sequence_gaps,queue_drops,invalid_json,players_tracked");
                 Debug.Log("Bridge metrics CSV: " + RecordingPath, this);
             }
             catch (IOException e) { StopRecording(); Debug.LogError("Cannot record bridge metrics: " + e.Message, this); }
@@ -56,11 +56,15 @@ namespace IPCV.Bridge
         {
             trackingFrames++;
             if (csv == null) return;
+            // Counts usable poses, including predicted joints.
+            int tracked = 0;
+            foreach (PlayerState p in frame.players)
+                if (p.tracked) tracked++;
             csv.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                "{0:F6},{1},{2},{3:F6},{4},{5:F6},{6},{7:F3},{8:F3},{9},{10},{11}",
-                BridgeClock.Now(), frame.session_id, frame.sequence, frame.ProcessingMs,
+                "{0:F6},{1},{2},{3:F6},{4},{5:F6},{6},{7:F3},{8:F3},{9},{10},{11},{12}",
+                BridgeClock.Now(), frame.session_id, frame.sequence, frame.CaptureToSendMs,
                 Metric(receiver.EncodeAndUdpMs), receiver.ReceiveToApplyMs, Metric(receiver.CaptureToApplyMs),
-                TrackingFps, UnityFps, receiver.SequenceGaps, receiver.QueueDrops, receiver.InvalidPackets));
+                TrackingFps, UnityFps, receiver.SequenceGaps, receiver.QueueDrops, receiver.InvalidPackets, tracked));
         }
 
         private static string Metric(double v) => double.IsNaN(v) ? "" : v.ToString("F6", CultureInfo.InvariantCulture);

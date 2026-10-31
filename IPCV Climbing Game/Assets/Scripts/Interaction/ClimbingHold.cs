@@ -137,7 +137,7 @@ namespace IPCV.Game
                 }
 
                 Vector3 reach = climber.shoulders[i].position + (Vector3)climber.input.reachOffsets[i];
-                if (FindNear(reach) == this)
+                if (climber.FindHold(i, reach) == this)
                 {
                     Hovered = true;
                 }
@@ -425,19 +425,24 @@ namespace IPCV.Game
         }
 
         // Returns the closest hold that is not broken and close enough to grab, or null.
-        public static ClimbingHold FindNear(Vector3 position)
+        // minHeight: only holds above this height count (with the camera, holds above the shoulder).
+        // except: a hold to skip, the one the same player's other hand is already on.
+        // sideways: how much the sideways distance counts; below 1 reaches further sideways than up and down.
+        public static ClimbingHold FindNear(Vector3 position, float minHeight = float.NegativeInfinity, ClimbingHold except = null, float sideways = 1f)
         {
             ClimbingHold closest = null;
             float closestDistance = float.PositiveInfinity;
 
             foreach (ClimbingHold hold in All)
             {
-                if (hold.Broken)
+                if (hold.Broken || hold == except || hold.transform.position.y <= minHeight)
                 {
                     continue;
                 }
 
-                float distance = Vector2.Distance(position, hold.transform.position);
+                Vector2 gap = hold.transform.position - position;
+                gap.x *= sideways;
+                float distance = gap.magnitude;
                 if (distance <= hold.grabDistance && distance < closestDistance)
                 {
                     closest = hold;

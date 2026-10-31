@@ -34,7 +34,8 @@ Pass the normal, unmirrored camera frame and the same increasing timestamp the o
 |---|---|
 | `track_id` | Same number for the same face across frames. A face that is dropped and comes back gets a new id. **Not a player id.** |
 | `bbox` | `(x, y, width, height)` normalized to the image, origin top left, **not mirrored**, smoothed and clipped to the image. For Unity's mirrored display use `x = 1 - x - width`. |
-| `jpeg` | 256x256 JPEG of the smoothed box, at most `bridge.face.MAX_FACE_JPEG_BYTES`. Quality starts at 85 and drops until it fits; `None` if it never fits (don't send a face then). |
+| `jpeg` | 256x256 upright, mirrored JPEG from SFace's aligned crop, at most `bridge.face.MAX_FACE_JPEG_BYTES`. Quality starts at 85 and drops until it fits; `None` if it never fits. |
+| `roll_deg` | Eye-line tilt in degrees, clockwise in the **unmirrored** image, filtered per face with One Euro. The pipeline negates it for the mirrored display. Yaw and pitch are not estimated. |
 | `template_scores` | `(score_0, score_1)`, cosine similarity of the face's SFace features to template 0 and 1 (-1..1, higher is more alike), or `None` until both templates exist. |
 | `detected` | `True` if the detector saw the face this frame. `False` while the face is held after a missed detection. |
 
@@ -43,6 +44,7 @@ Pass the normal, unmirrored camera frame and the same increasing timestamp the o
 - **All faces are returned**, also before the templates exist and also when there are more than two.
 - **Templates**: the first frame where exactly two faces are detected, both faces' SFace features are stored for the rest of the run. Template 0 is the face on the left of the mirrored screen at that moment (the right of the unmirrored camera image), template 1 the other one. Identity turns template 0 into player 1, who controls the left climber. `reset_templates()` clears the templates and face tracks, then captures new ones the next time two faces are seen. The scores are only a hint: this module does not decide who is player 1 or 2.
 - **Smoothing**: each face has its own `Pose.filtering.OneEuroFilter` on the box centre and size. Speed is measured in face widths per second. Tune with `FILTER_MIN_CUTOFF` (lower = less jitter) and `FILTER_BETA` (higher = less lag) at the top of `faceTracking.py`.
+- **Orientation**: the vector between YuNet's two eye landmarks is normalized and filtered with the same One Euro implementation, then converted with `atan2` to roll. Unity rotates the matching photo by this tilt. The already computed SFace alignment removes tilt from the JPEG first; no extra model is run. The 112x112 aligned crop is enlarged to the bridge's 256x256 format. Strong head turns, tiny faces and occluded eyes can make roll unreliable.
 - **Matching between frames**: a detection continues the track whose smoothed box overlaps it most (IoU at least `MIN_MATCH_IOU = 0.3`); otherwise it starts a new track.
 - **Missed detections**: a face that isn't detected is still returned with its last box, JPEG and scores and `detected=False`. After `FACE_TIMEOUT_S = 0.5` seconds without a detection it is dropped, so Unity can hide it.
 

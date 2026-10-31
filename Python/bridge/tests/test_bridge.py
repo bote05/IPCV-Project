@@ -3,6 +3,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import threading
 import time
 import types
 import unittest
@@ -222,6 +223,45 @@ class CameraRunnerTests(unittest.TestCase):
         processor.assert_called_once()
         camera.release.assert_called_once()
         cv.destroyAllWindows.assert_called_once()
+
+
+class LatestFrameTests(unittest.TestCase):
+    def test_stalled_read_is_not_released_by_the_main_thread(self):
+        entered, resume = threading.Event(), threading.Event()
+        camera = Mock()
+
+        def read():
+            entered.set()
+            resume.wait(5)
+            return False, None
+
+        camera.read.side_effect = read
+        frames = main.LatestFrame(camera)
+        try:
+            self.assertTrue(entered.wait(2))
+            frames.close()
+            camera.release.assert_not_called()
+        finally:
+            resume.set()
+            frames.thread.join(2)
+        self.assertFalse(frames.thread.is_alive())
+        camera.release.assert_called_once()
+
+    def test_reader_exception_wakes_consumer_and_releases_camera(self):
+        camera = Mock()
+        camera.read.side_effect = RuntimeError("camera disconnected")
+        with self.assertLogs(level="ERROR"):
+            frames = main.LatestFrame(camera)
+            try:
+                self.assertEqual(frames.read()[:2], (False, None))
+            finally:
+                frames.close()
+        camera.release.assert_called_once()
+
+    def test_throughput_uses_elapsed_time(self):
+        with self.assertLogs(level="INFO") as logs:
+            main.log_loop_times({"whole loop": [0.01, 0.02, 0.20]})
+        self.assertIn("Tracking rate 13.0 fps over 3 frames", logs.output[-1])
 
 
 class PoseAdapterTests(unittest.TestCase):

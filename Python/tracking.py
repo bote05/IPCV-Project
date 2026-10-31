@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import math
 import logging
+import time
 
 import cv2
 
@@ -14,6 +15,10 @@ from Identity.position import PositionEstimator
 from Pose import PoseDetector, PoseTracker, Joint, JointState
 from Pose.tools.demo import mirror_for_display
 from Pose.tools.visualize import draw_player, draw_text, player_color
+
+# Approximate depth until both players calibrate at a measured distance.
+ASSUMED_TORSO_M = 0.5
+CALIBRATION_COUNTDOWN_S = 5.0
 
 
 class GameTracking:
@@ -32,14 +37,15 @@ class GameTracking:
         self.positions = None
         self.players = []   # PlayerPose list of the last frame, Identity matches against it
         self.face_of = {}   # player id -> FaceObservation
-        self.calibrate_next = False
+        self.calibrate_at = None   # perf_counter time when the C countdown ends
+        self.calibrated = False
 
     def process(self, frame, t: float) -> TrackingResult:
         height, width = frame.shape[:2]
         if self.positions is None:
             # No camera calibration: the focal length comes from an assumed field of view.
-            fx = width / 2 / math.tan(math.radians(self.fov) / 2)
-            self.positions = PositionEstimator(fx, fx, width / 2, height / 2)
+            self.fx = width / 2 / math.tan(math.radians(self.fov) / 2)
+            self.positions = PositionEstimator(self.fx, self.fx, width / 2, height / 2)
         self.identity.imageSize = (width, height)
 
         face_job = self.face_thread.submit(self.faces.process, frame, t)
@@ -62,15 +68,19 @@ class GameTracking:
 
         torso = [Joint.LEFT_SHOULDER, Joint.RIGHT_SHOULDER, Joint.LEFT_HIP, Joint.RIGHT_HIP]
         positioned = [p for p in self.players if p.detected and all(p.state[j] == JointState.TRACKED for j in torso)]
-        if self.calibrate_next:
+        if self.calibrate_at is not None and time.perf_counter() >= self.calibrate_at:
+            self.calibrate_at = None
             if {p.id for p in positioned} == {1, 2}:
                 self.positions.K.clear()
                 self.positions.estimate_players(positioned, self.calibration_distance)
+                self.calibrated = True
                 logging.info("Both players calibrated at %g m", self.calibration_distance)
             else:
                 logging.warning("Calibration skipped: both players' shoulders and hips must be visible. Press C again.")
+        for player in positioned:
+            # z = K / torso pixels, so an assumed torso length gives K = focal length * torso length.
+            self.positions.K.setdefault(player.id, self.fx * ASSUMED_TORSO_M)
         metres = self.positions.estimate_players(positioned)
-        self.calibrate_next = False
 
         states = []
         for player in self.players:
@@ -79,7 +89,8 @@ class GameTracking:
                 face = self.face_of.get(player.id)
                 if face is not None:
                     x, y, w, h = face.bbox
-                    state = replace(state, face_bbox=(1 - x - w, y, w, h))
+                    state = replace(state, face_bbox=(1 - x - w, y, w, h),
+                                    head_rotation_deg=(0.0, 0.0, -face.roll_deg))
                 if player.id in metres:
                     x, y, z = metres[player.id]
                     state = replace(state, world_position_m=(x, -y, z))
@@ -89,7 +100,7 @@ class GameTracking:
 
     def on_key(self, key: int) -> None:
         if key == ord("c"):
-            self.calibrate_next = True
+            self.calibrate_at = time.perf_counter() + CALIBRATION_COUNTDOWN_S
         elif key == ord("n"):
             # New people in front of the camera: forget faces, identities and calibration.
             self.faces.reset_templates()
@@ -97,7 +108,8 @@ class GameTracking:
             self.tracker.reset()
             self.players = []
             self.face_of = {}
-            self.calibrate_next = False
+            self.calibrate_at = None
+            self.calibrated = False
             if self.positions is not None:
                 self.positions.K.clear()
 
@@ -115,8 +127,12 @@ class GameTracking:
                           (int((x + w) * width), int((y + h) * height)), player_color(pid), 2)
         if self.faces.templates is None:
             draw_text(view, "Both players: stand side by side and face the camera", (10, 25), scale=0.6)
-        calibrated = self.positions is not None and self.positions.K
-        draw_text(view, f"C calibrate at {self.calibration_distance:g} m{' (done)' if calibrated else ''}"
+        if self.calibrate_at is not None:
+            left = max(0.0, self.calibrate_at - time.perf_counter())
+            draw_text(view, f"Stand at {self.calibration_distance:g} m: calibrating in {math.ceil(left)}",
+                      (10, 60), (0, 255, 255), scale=1.2)
+        status = "calibrated" if self.calibrated else "estimated"
+        draw_text(view, f"Distance {status}   C calibrate at {self.calibration_distance:g} m ({CALIBRATION_COUNTDOWN_S:g} s countdown)"
                   "   N new players   Q quit", (10, height - 12), scale=0.5)
         return view
 

@@ -41,7 +41,8 @@ namespace IPCV.Game
             }
             else if (climber.WaitingForPlayers)
             {
-                statusText.text = "BOTH RAISE A HAND / START";
+                statusText.text = input.inPlayingArea[0] && input.inPlayingArea[1]
+                    ? "BOTH RAISE A HAND / START" : "CHECK PLAYER POSITIONS";
             }
             else if (climber.Finished)
             {
@@ -93,13 +94,18 @@ namespace IPCV.Game
             {
                 return label + "   STEP INTO VIEW";
             }
+            if (input.useTracking && (climber.WaitingForPlayers || climber.Finished)
+                && !input.inPlayingArea[player])
+            {
+                return label + "   " + input.positionHint[player];
+            }
             if (!showHelp)
             {
                 return label;
             }
             if (input.useTracking)
             {
-                return label + "   REACH UP / PULL DOWN\n       LOWER HAND TO LET GO";
+                return label + "   TOUCH A HOLD, PULL TO SHOULDER\n       DROP HAND TO LET GO";
             }
             if (player == 0)
             {

@@ -73,6 +73,7 @@ class FaceObservation:
           after a missed detection (box, JPEG and scores are then from the last detection).
     track_id: stays the same for the same face across frames; a new id after the face is dropped.
           This is not a player id.
+    roll_deg: filtered eye-line tilt, clockwise in the unmirrored camera image.
     """
 
     track_id: int
@@ -80,6 +81,7 @@ class FaceObservation:
     jpeg: Optional[bytes]
     template_scores: Optional[Tuple[float, float]]
     detected: bool
+    roll_deg: float = 0.0
 
 
 def model_missing_message() -> str:
@@ -116,10 +118,16 @@ def encode_jpeg(image: np.ndarray) -> Optional[bytes]:
     return None
 
 
+def eye_direction(keypoints: list) -> np.ndarray:
+    direction = np.asarray(keypoints[1]) - keypoints[0]
+    return direction / max(float(np.linalg.norm(direction)), 1.0)
+
+
 @dataclass
 class _Track:
     track_id: int
     filter: OneEuroFilter
+    eye_filter: OneEuroFilter
     last_update_s: float
     last_detected_s: float
     jpeg: Optional[bytes] = None
@@ -216,6 +224,7 @@ class FaceTracker:
             track, (box, keypoints) = self._tracks[k], detections[d]
             dt = max(t - track.last_update_s, MIN_DT)
             track.filter.update(box[None, :], dt, _ROW, scale=max(track.box[2], 1.0))
+            track.eye_filter.update(eye_direction(keypoints)[None, :], dt, _ROW)
             track.last_update_s = track.last_detected_s = t
             track.detected, track.keypoints = True, keypoints
 
@@ -227,20 +236,22 @@ class FaceTracker:
             if d not in matched_detections:
                 euro = OneEuroFilter((1, 4), FILTER_MIN_CUTOFF, FILTER_BETA, FILTER_D_CUTOFF)
                 euro.set(_ROW, box)
-                self._tracks.append(_Track(next(self._ids), euro, t, t, keypoints=keypoints))
+                eyes = OneEuroFilter((1, 2), FILTER_MIN_CUTOFF, FILTER_BETA, FILTER_D_CUTOFF)
+                eyes.set(_ROW, eye_direction(keypoints))
+                self._tracks.append(_Track(next(self._ids), euro, eyes, t, t, keypoints=keypoints))
 
     def _refresh_crop(self, track: _Track, frame_bgr: np.ndarray) -> None:
-        """New JPEG and template from the smoothed box. A crop that is too big is skipped (None)."""
+        """Reuse SFace's upright crop for the photo; Unity applies the measured tilt once."""
         height, width = frame_bgr.shape[:2]
         x1, y1, x2, y2 = clip_box(track.box, width, height)
         track.jpeg = track.template = track.scores = None
         if x2 <= x1 or y2 <= y1:
             return
-        crop = frame_bgr[y1:y2, x1:x2]
-        track.jpeg = encode_jpeg(cv2.resize(crop, FACE_JPEG_SIZE))
         # SFace aligns the face on its five landmarks (eyes, nose, mouth corners) first.
         face_row = np.array([x1, y1, x2 - x1, y2 - y1, *np.ravel(track.keypoints), 1.0], dtype=np.float32)
-        track.template = self._recognizer.feature(self._recognizer.alignCrop(frame_bgr, face_row)).copy()
+        upright = self._recognizer.alignCrop(frame_bgr, face_row)
+        track.template = self._recognizer.feature(upright).copy()
+        track.jpeg = encode_jpeg(cv2.resize(cv2.flip(upright, 1), FACE_JPEG_SIZE))
 
     def _capture_templates(self) -> None:
         """The first time exactly two faces are detected, store them left to right on the mirrored screen."""
@@ -262,7 +273,9 @@ class FaceTracker:
     def _observation(self, track: _Track, width: int, height: int) -> FaceObservation:
         x1, y1, x2, y2 = clip_box(track.box, width, height)
         bbox = (x1 / width, y1 / height, max(x2 - x1, 0) / width, max(y2 - y1, 0) / height)
-        return FaceObservation(track.track_id, bbox, track.jpeg, track.scores, track.detected)
+        dx, dy = track.eye_filter.value[0]
+        roll = float(np.degrees(np.arctan2(dy, dx)))
+        return FaceObservation(track.track_id, bbox, track.jpeg, track.scores, track.detected, roll)
 
     def _draw(self, frame_bgr: np.ndarray) -> np.ndarray:
         """Debug view: only the face regions on black, with track id and template scores."""

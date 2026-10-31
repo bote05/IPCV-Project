@@ -41,11 +41,11 @@ Activate this same environment for tracking and tests. It uses `opencv-contrib-p
 |---|---|
 | `image_size` | Camera width and height in pixels, empty in the demo. Unity multiplies normalized x by width / height before comparing distances in x and y. |
 | `session_id`, `sequence` | New id every time Python starts, and a frame counter. Unity ignores old or duplicate packets. |
-| `captured_time_s`, `sent_time_s` | When the frame was captured and sent; Unity derives processing time from their difference |
+| `captured_time_s`, `sent_time_s` | Camera read completion and start of sending; their difference includes any wait before processing |
 | `id`, `tracked` | Player 1 or 2, from Identity |
 | `pose` | Empty, or 13 joints with `position: [x, y]` and `state`. Coordinates are normalized to image size, origin top left. No depth or invented confidence. |
 | `face_bbox` | Empty, or x, y, width, height normalized to image size; match the pose's display mirroring when integrating Face |
-| `head_rotation_deg` | Empty, or yaw, pitch, roll in degrees |
+| `head_rotation_deg` | Empty, or yaw, pitch, roll in degrees. Current tracking supplies roll only; yaw/pitch stay neutral (0), not measured. Roll is clockwise in the mirrored image. |
 | `world_position_m` | Empty, or x, y, z in metres |
 | `hand_raised` | Empty if unknown, otherwise two booleans `[left, right]`, forwarded from Pose |
 | `events` | Recent events with `id`, `type`, `side`, `strength`, `time`; repeated by Pose for 200 ms |
@@ -62,7 +62,7 @@ A face packet is the text `IPCF`, the session id, the player id, a counter and t
 
 1. Mirroring: detection and identity use the normal camera image. `to_dict(size, mirror=True)` prepares the pose for Unity's mirrored display; do not flip it again in Unity. Names remain the player's own left/right. `tracking.py` mirrors the face box the same way (`x = 1 - x - width`) for display. Metre positions remain camera-relative: x right in the original camera image, y down, z away. They are not mirrored.
 2. Position: metres from the camera, x to the right, y down, z away from the camera, measured at the middle of the hips.
-3. Head rotation: 0 means looking straight at the camera.
+3. Head rotation: the current face module measures roll from the eyes, with 0 meaning level eyes. The pipeline mirrors its sign; Unity converts image-clockwise roll to the photo's local rotation. Yaw and pitch remain neutral, not measurements. Face JPEGs are already upright and mirrored.
 4. Actions: use `hand_raised[0]` for the left hand and `[1]` for the right hand. Events use the callback below. Badr decides their gameplay effects and cooldowns.
 5. Losing a player: let go of everything they were holding and hide their effects.
 
@@ -96,7 +96,7 @@ The callback runs on Unity's main thread once per event ID per player/session. U
 
 Python and Unity use the same Windows clock, so we can measure how long a frame takes from the camera to Unity. This does not include the camera's own delay or drawing the frame on screen. Press F1 in Unity and then "Start metrics CSV" in the debug panel to save the timings. The bottom-left line always shows tracking FPS, Unity FPS and capture-to-Unity latency.
 
-Processing time stays in the metrics CSV and debug panel, calculated in Unity from the two timestamps. Record real tracking and gameplay runs with `BridgeMetrics` for the project evaluation.
+The CSV's `capture_to_send_ms` (called `processing_ms` in older recordings) and the debug panel use the difference between those timestamps. With `--camera-thread`, that includes waiting before processing; the terminal reports processing time separately. `players_tracked` counts usable poses, including predictions, not correct identities. Record real gameplay with `BridgeMetrics` for the project evaluation.
 
 ```powershell
 python -m unittest discover -s Python/bridge/tests -t Python

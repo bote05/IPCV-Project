@@ -11,6 +11,9 @@ namespace IPCV.Game
         public UdpFrameReceiver receiver;
         public bool useTracking;
         public float reachScale = 1.8f;
+        [Tooltip("Camera distance in metres required before starting or restarting. Estimated from torso size; C in the webcam window calibrates it.")]
+        public float minPlayingDistance = 1.5f;
+        public float maxPlayingDistance = 3f;
         [Tooltip("Keyboard: extra sideways reach per hand. Hands on the inner shoulders (0 and 3) need more to reach the same holds.")]
         public float[] extraReach = { 0.55f, 0f, 0f, 0.55f };
         // Where each hand is drawn and pulls from.
@@ -22,13 +25,36 @@ namespace IPCV.Game
         public readonly bool[] playerSeen = new bool[2];
         // Pose's raised-hand signal, separate from the game's grip latch.
         public readonly bool[] handRaised = new bool[2];
-        public readonly bool[] handsObserved = new bool[2];
+        public readonly bool[] inPlayingArea = new bool[2];
+        public readonly string[] positionHint = new string[2];
         // Keyboard: hand height above the shoulder. The arms start out to the side, a little raised.
         private readonly float[] handHeights = { 0.6f, 0.6f, 0.6f, 0.6f };
         private readonly float[] sideReach = { 1f, 1f };
         private readonly bool[] trackingGrip = new bool[4];
+        // Release below the shoulder, measured in shoulder widths.
+        private const float LetGo = -1f;
+        // A straight raised arm reaches the hold column without crossing the face.
+        private const float ColumnReach = 0.95f;
+        private const float SideScale = 1.2f;
+        // Keep the grip during brief arm or player loss.
+        private const float LostGrace = 2f;
+        private readonly float[] lastArmTime = new float[4];
+        // Prevent raised hands from repeatedly taking over each other's grip.
+        private readonly bool[] mustLower = new bool[4];
         private string session;
         public int ModeVersion { get; private set; }
+
+        // Tracking only: opens one hand, e.g. after the same player's other hand grabbed a new hold.
+        public void ReleaseHand(int hand)
+        {
+            if (!useTracking)
+            {
+                return;
+            }
+            trackingGrip[hand] = false;
+            wantsGrip[hand] = false;
+            mustLower[hand] = true;
+        }
 
         public void SetTracking(bool value)
         {
@@ -227,29 +253,40 @@ namespace IPCV.Game
                 }
                 handRaised[player] = playerSeen[player] && pose.hand_raised.Length == 2
                     && (pose.hand_raised[0] || pose.hand_raised[1]);
-                int observedArms = 0;
+                inPlayingArea[player] = false;
+                if (!playerSeen[player])
+                    positionHint[player] = "STEP INTO VIEW";
+                else if (pose.world_position_m.Length != 3)
+                    positionHint[player] = "SHOW SHOULDERS + HIPS";
+                else if (pose.world_position_m[2] < minPlayingDistance)
+                    positionHint[player] = "STEP BACK";
+                else if (pose.world_position_m[2] > maxPlayingDistance)
+                    positionHint[player] = "STEP CLOSER";
+                else
+                {
+                    inPlayingArea[player] = true;
+                    positionHint[player] = null;
+                }
 
                 for (int side = 0; side < 2; side++)
                 {
                     int hand = player * 2 + side;
-                    wantsGrip[hand] = false;
                     canGrab[hand] = false;
-
-                    if (!playerSeen[player])
-                    {
-                        trackingGrip[hand] = false;
-                        continue;
-                    }
 
                     Vector2 offset;
                     bool fresh;
-                    bool armFound = TryArm(pose, side, aspect, out offset, out fresh);
-                    if (!armFound)
+                    if (!playerSeen[player] || !TryArm(pose, side, aspect, out offset, out fresh))
                     {
-                        trackingGrip[hand] = false;
+                        // Not seen: the hand stays where it was and keeps holding for a moment, so the
+                        // climbers do not fall. After that it lets go.
+                        if (Time.time - lastArmTime[hand] > LostGrace)
+                        {
+                            trackingGrip[hand] = false;
+                        }
+                        wantsGrip[hand] = trackingGrip[hand];
                         continue;
                     }
-                    if (fresh) observedArms++;
+                    lastArmTime[hand] = Time.time;
 
                     // Both arms point outwards from their own torso. The bridge already mirrors the image.
                     float direction = 1;
@@ -257,26 +294,32 @@ namespace IPCV.Game
                     {
                         direction = -1;
                     }
-                    float x = Mathf.Clamp(Mathf.Abs(offset.x) * reachScale, 0.4f, 1.6f);
-                    float y = Mathf.Clamp(offset.y * reachScale, -0.7f, 2.1f);
+                    // Outward (away from the other player) moves the hand past the holds, inward moves
+                    // it back towards the middle.
+                    float outward = offset.x * direction;
+                    float x = Mathf.Clamp(ColumnReach + extraReach[hand] + outward * SideScale, -0.3f, 2.4f);
+                    float y = Mathf.Clamp(offset.y * reachScale, -1.2f, 2.4f);
                     handOffsets[hand] = new Vector2(direction * x, y);
                     reachOffsets[hand] = handOffsets[hand];
 
-                    // Raising the wrist well above the shoulder starts a grip.
-                    // The grip stays on until the wrist drops below the chest.
-                    if (fresh && offset.y > 0.65f)
+                    // A hand above the release line is closed: it grabs the hold it touches (ClimberBody
+                    // only takes holds above the shoulder). Dropping it below the line lets go.
+                    if (offset.y < 0f)
                     {
-                        trackingGrip[hand] = true;
+                        mustLower[hand] = false;
                     }
-                    if (offset.y < -0.3f)
+                    if (offset.y < LetGo)
                     {
                         trackingGrip[hand] = false;
+                    }
+                    else if (!mustLower[hand])
+                    {
+                        trackingGrip[hand] = true;
                     }
 
                     wantsGrip[hand] = trackingGrip[hand];
                     canGrab[hand] = fresh;
                 }
-                handsObserved[player] = observedArms == 2 && pose.hand_raised.Length == 2;
             }
         }
 
@@ -294,14 +337,15 @@ namespace IPCV.Game
             // The climbers face the players like a mirror image. Side 0 is the arm on the right
             // of the screen, so the player's right hand moves it.
             PoseJoint wristJoint = PoseJoint.LeftWrist;
+            PoseJoint elbowJoint = PoseJoint.LeftElbow;
             if (side == 0)
             {
                 wristJoint = PoseJoint.RightWrist;
+                elbowJoint = PoseJoint.RightElbow;
             }
 
             PoseLandmark left;
             PoseLandmark right;
-            PoseLandmark wrist;
             if (!pose.TryGetJoint(PoseJoint.LeftShoulder, out left))
             {
                 return false;
@@ -310,14 +354,9 @@ namespace IPCV.Game
             {
                 return false;
             }
-            if (!pose.TryGetJoint(wristJoint, out wrist))
-            {
-                return false;
-            }
 
-            Vector2 leftShoulder = new Vector2((float)left.position[0] * aspect, (float)left.position[1]);
-            Vector2 rightShoulder = new Vector2((float)right.position[0] * aspect, (float)right.position[1]);
-            Vector2 wristPoint = new Vector2((float)wrist.position[0] * aspect, (float)wrist.position[1]);
+            Vector2 leftShoulder = Point(left, aspect);
+            Vector2 rightShoulder = Point(right, aspect);
 
             // Shoulder width is the unit, so the distance to the camera does not matter.
             float width = Vector2.Distance(leftShoulder, rightShoulder);
@@ -332,17 +371,48 @@ namespace IPCV.Game
                 shoulder = rightShoulder;
             }
 
-            // Image y points down, so flip it: a positive y means the wrist is above the shoulder.
+            // Use the wrist when tracked, or extend a visible raised elbow.
+            PoseLandmark wrist;
+            PoseLandmark elbow;
+            bool wristFound = pose.TryGetJoint(wristJoint, out wrist);
+            bool wristSeen = wristFound && wrist.state == JointState.Tracked;
+            // Image y points down, so a smaller y is higher.
+            bool elbowRaised = pose.TryGetJoint(elbowJoint, out elbow) && elbow.state == JointState.Tracked
+                && Point(elbow, aspect).y < shoulder.y;
+
+            Vector2 wristPoint;
+            if (wristSeen || (wristFound && !elbowRaised))
+            {
+                wristPoint = Point(wrist, aspect);
+            }
+            else if (elbowRaised)
+            {
+                // A raised wrist often leaves the top of the picture. The arm then goes on past the elbow
+                // as far again as from the shoulder, which is about where the wrist of a straight arm is.
+                Vector2 elbowPoint = Point(elbow, aspect);
+                wristPoint = elbowPoint + (elbowPoint - shoulder);
+                wristSeen = true;
+            }
+            else
+            {
+                return false;
+            }
+
+            // Flip y: a positive y means the wrist is above the shoulder.
             float x = wristPoint.x - shoulder.x;
             float y = shoulder.y - wristPoint.y;
             offset = new Vector2(x, y) / width;
 
-            // Only joints that were really seen (not guessed) can start a new grip.
-            bool wristSeen = wrist.state == JointState.Tracked;
             bool leftSeen = left.state == JointState.Tracked;
             bool rightSeen = right.state == JointState.Tracked;
             fresh = wristSeen && leftSeen && rightSeen;
             return true;
+        }
+
+        // A joint in the same unit on both axes: aspect is the camera's width / height.
+        private static Vector2 Point(PoseLandmark joint, float aspect)
+        {
+            return new Vector2((float)joint.position[0] * aspect, (float)joint.position[1]);
         }
     }
 }

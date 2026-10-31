@@ -4,7 +4,9 @@ import argparse
 import logging
 import math
 from pathlib import Path
+import statistics
 import subprocess
+import threading
 import time
 
 from bridge.demo import demo_players
@@ -48,8 +50,64 @@ def send_faces(sender: UdpSender, result: TrackingResult) -> None:
                 logging.warning("Skipped face crop for player %s: %s", player_id, error)
 
 
+class LatestFrame:
+    """Read in the background, keeping only the newest frame."""
+
+    def __init__(self, camera):
+        self.camera = camera
+        self.frame = None
+        self.captured = 0.0
+        self.failed = False
+        self.running = True
+        self.ready = threading.Condition()
+        self.thread = threading.Thread(target=self._read, daemon=True)
+        self.thread.start()
+
+    def _read(self) -> None:
+        try:
+            while self.running:
+                ok, frame = self.camera.read()
+                if not ok:
+                    return
+                with self.ready:
+                    # Include waiting for processing in the capture-to-apply latency.
+                    self.frame, self.captured = frame, time.perf_counter()
+                    self.ready.notify()
+        except Exception:
+            logging.exception("Webcam reader failed")
+        finally:
+            with self.ready:
+                self.failed = True
+                self.ready.notify()
+            # Only this thread releases the camera, after read() has returned.
+            self.camera.release()
+
+    def read(self):
+        """(ok, frame, capture time) of a frame not returned before, waiting for it if needed."""
+        with self.ready:
+            self.ready.wait_for(lambda: self.frame is not None or self.failed, timeout=2)
+            frame, self.frame = self.frame, None
+            return frame is not None, frame, self.captured
+
+    def close(self) -> None:
+        self.running = False
+        self.thread.join(1)
+
+
+def log_loop_times(times: dict[str, list[float]]) -> None:
+    """Report loop timings and overall throughput."""
+    for name, values in times.items():
+        if len(values) >= 2:
+            p95 = statistics.quantiles(values, n=20, method="inclusive")[18]
+            logging.info("%-16s median %5.1f ms  p95 %5.1f ms", name, statistics.median(values) * 1000, p95 * 1000)
+    if len(times["whole loop"]) >= 2:
+        durations = times["whole loop"]
+        logging.info("Tracking rate %.1f fps over %d frames", len(durations) / sum(durations), len(durations))
+
+
 def run_camera(sender: UdpSender, processor, camera_index: int, fps: float,
-               draw=None, on_key=None, size: tuple[int, int] | None = None, game=None) -> None:
+               draw=None, on_key=None, size: tuple[int, int] | None = None, game=None,
+               camera_thread: bool = False) -> None:
     import cv2  # Only needed for the webcam, not the demo.
 
     camera = cv2.VideoCapture(camera_index)
@@ -59,20 +117,29 @@ def run_camera(sender: UdpSender, processor, camera_index: int, fps: float,
     if size:
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
+    frames = LatestFrame(camera) if camera_thread else None
     failed = False
     last_faces = 0.0
+    times = {name: [] for name in ("wait for camera", "processing", "sending", "preview window", "whole loop")}
     try:
         while True:
             started = time.perf_counter()
-            ok, frame = camera.read()
+            if frames:
+                ok, frame, captured = frames.read()
+            else:
+                ok, frame = camera.read()
+                captured = time.perf_counter()
             if not ok:
                 sender.send(())
                 raise RuntimeError("Webcam stopped returning frames")
-            captured = time.perf_counter()
+            times["wait for camera"].append(time.perf_counter() - started)
             try:
+                step = time.perf_counter()
                 result = processor(frame, captured)  # Normal BGR image and capture time in seconds.
                 if not isinstance(result, TrackingResult):
                     raise TypeError("Processor must return bridge.pipeline.TrackingResult")
+                times["processing"].append(time.perf_counter() - step)
+                step = time.perf_counter()
                 sender.send(result.players, captured_time_s=captured, image_size=result.image_size)
                 if failed:
                     logging.info("Frame processor recovered")
@@ -86,16 +153,24 @@ def run_camera(sender: UdpSender, processor, camera_index: int, fps: float,
                 if captured - last_faces >= 0.1:
                     send_faces(sender, result)
                     last_faces = captured
+                times["sending"].append(time.perf_counter() - step)
+            step = time.perf_counter()
             cv2.imshow("Webcam preview (mirrored display only; Q quits)", draw(frame) if draw else cv2.flip(frame, 1))
             key = cv2.waitKey(1) & 0xFF
+            times["preview window"].append(time.perf_counter() - step)
             if key in (ord("q"), ord("Q"), 27) or (game is not None and game.poll() is not None):
                 break
             if on_key:
                 on_key(key)
             time.sleep(max(0, 1 / fps - (time.perf_counter() - started)))
+            times["whole loop"].append(time.perf_counter() - started)
     finally:
-        camera.release()
+        if frames:
+            frames.close()
+        else:
+            camera.release()
         cv2.destroyAllWindows()
+        log_loop_times(times)
 
 
 def main() -> None:
@@ -108,10 +183,12 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1280, help="Requested camera width")
     parser.add_argument("--height", type=int, default=720, help="Requested camera height")
     parser.add_argument("--calibration-distance", type=float, default=2.0,
-                        help="Metres from the camera where players stand when C is pressed")
+                        help="Metres from the camera where players stand when the C countdown ends")
     parser.add_argument("--port", type=int, default=5005)
     parser.add_argument("--face-port", type=int, default=5006)
     parser.add_argument("--fps", type=positive_fps, default=30.0)
+    parser.add_argument("--camera-thread", action="store_true",
+                        help="Read the webcam in the background (may increase throughput and frame age)")
     parser.add_argument("--duration", type=float, help="Demo duration in seconds; omit to run until Ctrl+C")
     args = parser.parse_args()
     if not all(1 <= p <= 65535 for p in (args.port, args.face_port)) or args.port == args.face_port:
@@ -142,7 +219,7 @@ def main() -> None:
                     game = subprocess.Popen([str(GAME), "-screen-fullscreen", "0",
                                              "-screen-width", "1280", "-screen-height", "720"])
                 run_camera(sender, tracking.process, args.camera, args.fps, tracking.draw, tracking.on_key,
-                           (args.width, args.height), game)
+                           (args.width, args.height), game, args.camera_thread)
         except KeyboardInterrupt:
             pass
         finally:

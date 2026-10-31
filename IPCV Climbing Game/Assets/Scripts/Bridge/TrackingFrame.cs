@@ -21,7 +21,7 @@ namespace IPCV.Bridge
         public double captured_time_s, sent_time_s;
         public int[] image_size;
         public PlayerState[] players;
-        public double ProcessingMs => (sent_time_s - captured_time_s) * 1000;
+        public double CaptureToSendMs => (sent_time_s - captured_time_s) * 1000;
         // Width / height of the camera image. Multiply a normalized x by this to compare it with a normalized y.
         public float Aspect => image_size != null && image_size.Length == 2 && image_size[1] > 0
             ? (float)image_size[0] / image_size[1] : 1f;

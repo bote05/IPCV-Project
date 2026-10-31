@@ -11,6 +11,14 @@ namespace IPCV.Game
         public Renderer photo;
         public GameObject drawnFace;
         private MaterialPropertyBlock properties;
+        private UdpFrameReceiver tracking;
+        private Quaternion restRotation;
+
+        private void Awake()
+        {
+            if (receiver != null) tracking = receiver.GetComponent<UdpFrameReceiver>();
+            restRotation = photo.transform.localRotation;
+        }
 
         private void LateUpdate()
         {
@@ -24,6 +32,14 @@ namespace IPCV.Game
             // Show the photo when there is one, otherwise the model's own face.
             photo.enabled = ready;
             drawnFace.SetActive(!ready);
+            float roll = 0;
+            if (ready && tracking != null && tracking.TryGetPlayer(playerId, out PlayerState player)
+                && player.head_rotation_deg.Length == 3)
+            {
+                roll = (float)player.head_rotation_deg[2];
+            }
+            // Image y points down; the photo's local y points up.
+            photo.transform.localRotation = restRotation * Quaternion.Euler(0, 0, -roll);
             if (!ready)
             {
                 return;

@@ -44,6 +44,9 @@ namespace IPCV.Game
         private Vector3 start;
         private int inputVersion;
         private readonly bool[] mustRelease = new bool[4];
+        // Pull from the highest wrist position down to the shoulder; ignore further lowering.
+        private readonly float[] pullStart = new float[4];
+        private readonly float[] pullPeak = new float[4];
         // At the top: each player has lowered their hands since, so raising one now means "again".
         private readonly bool[] loweredAtTop = new bool[2];
         // Where each drawn hand is compared to its shoulder. It slides toward the real target.
@@ -124,13 +127,11 @@ namespace IPCV.Game
             // With the camera, both players lower their hands and then raise one to climb again.
             if (Finished && input != null && input.useTracking)
             {
+                // Arms hanging down are often outside the picture, so a player who is seen without
+                // a raised hand counts as lowered. Pose only raises hands on clearly seen wrists.
                 for (int player = 0; player < 2; player++)
                 {
-                    if (!input.handsObserved[player])
-                    {
-                        loweredAtTop[player] = false;
-                    }
-                    else if (!input.handRaised[player])
+                    if (input.playerSeen[player] && !input.handRaised[player])
                     {
                         loweredAtTop[player] = true;
                     }
@@ -194,7 +195,7 @@ namespace IPCV.Game
                 if (heldHolds[i] != null && heldHolds[i].Broken)
                 {
                     heldHolds[i] = null;
-                    mustRelease[i] = true;
+                    LetGoAfterLosingHold(i);
                 }
 
                 // The player let go of this hand.
@@ -212,15 +213,26 @@ namespace IPCV.Game
                 bool canTryGrab = heldHolds[i] == null && input.wantsGrip[i] && input.canGrab[i] && !mustRelease[i];
                 if (canTryGrab)
                 {
-                    heldHolds[i] = ClimbingHold.FindNear(reach);
+                    heldHolds[i] = FindHold(i, reach);
                     if (heldHolds[i] != null)
                     {
+                        pullStart[i] = Mathf.Max(offset.y, 0f);
+                        pullPeak[i] = pullStart[i];
                         float volume = 1f;
                         if (i < 2)
                         {
                             volume = 0.8f;
                         }
                         sound.PlayOneShot(grabSound, volume);
+
+                        // With the camera, grabbing a new hold lets go of the same player's other
+                        // hand, so the two hands never pull against each other.
+                        int other = i ^ 1;
+                        if (input.useTracking && heldHolds[other] != null)
+                        {
+                            heldHolds[other] = null;
+                            input.ReleaseHand(other);
+                        }
                     }
                 }
 
@@ -237,8 +249,20 @@ namespace IPCV.Game
                 if (armLength > maxArmLength)
                 {
                     heldHolds[i] = null;
-                    mustRelease[i] = true;
+                    LetGoAfterLosingHold(i);
                     continue;
+                }
+
+                if (input.useTracking)
+                {
+                    pullPeak[i] = Mathf.Max(pullPeak[i], offset.y);
+                    // 1 at the highest point, 0 once the hand is at the shoulder or below.
+                    float remaining = 0f;
+                    if (pullPeak[i] > 0.01f)
+                    {
+                        remaining = Mathf.Clamp01(offset.y / pullPeak[i]);
+                    }
+                    offset.y = pullStart[i] * remaining;
                 }
 
                 // Where the body should be so that this hand sits exactly on its hold.
@@ -466,6 +490,40 @@ namespace IPCV.Game
             return elbow;
         }
 
+        // Camera grabs favour overhead holds, allow sideways sway, and skip the other hand's hold.
+        public ClimbingHold FindHold(int i, Vector3 reach)
+        {
+            ClimbingHold hold;
+            if (input.useTracking)
+            {
+                hold = ClimbingHold.FindNear(reach, shoulders[i].position.y + 0.6f, heldHolds[i ^ 1], 0.6f);
+            }
+            else
+            {
+                hold = ClimbingHold.FindNear(reach);
+            }
+
+            if (hold != null && Vector2.Distance(shoulders[i].position, hold.transform.position) > maxArmLength)
+            {
+                return null;
+            }
+            return hold;
+        }
+
+        // The keyboard player must release the key first. With the camera the hand opens by itself and
+        // can grab again once it comes below the shoulder, so a broken hold does not lock it.
+        private void LetGoAfterLosingHold(int hand)
+        {
+            if (input.useTracking)
+            {
+                input.ReleaseHand(hand);
+            }
+            else
+            {
+                mustRelease[hand] = true;
+            }
+        }
+
         public void ReleaseAll()
         {
             for (int i = 0; i < 4; i++)
@@ -484,6 +542,9 @@ namespace IPCV.Game
                 hold.ResetHold();
             }
             body.isKinematic = false;
+            // Move the transform too: the rigidbody only moves it at the next physics step, and the
+            // finish check in Update would otherwise still see the old height and finish again.
+            transform.SetPositionAndRotation(start, Quaternion.identity);
             body.position = start;
             body.rotation = Quaternion.identity;
             body.linearVelocity = Vector3.zero;
@@ -502,8 +563,8 @@ namespace IPCV.Game
 
         private bool BothReady()
         {
-            return input.handsObserved[0] && input.handsObserved[1]
-                && input.handRaised[0] && input.handRaised[1];
+            return input.handRaised[0] && input.handRaised[1]
+                && input.inPlayingArea[0] && input.inPlayingArea[1];
         }
 
         private void OnDestroy()

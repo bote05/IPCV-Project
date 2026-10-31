@@ -39,17 +39,23 @@ Build the Unity game into `Build/ClimbingGame.exe` (the folder is not in git). E
 1. Double-click `play.bat` (or `python main.py --play` from `Python/`). It starts the game in a window and the webcam tracking together. Closing the game window, or pressing `Q` in the webcam window, stops both.
 2. The mirrored webcam window shows each player's skeleton, number and face box. Place it next to the game window.
 3. Both players stand side by side about 2 m from the camera and face it until `P1` and `P2` appear. Player 1 is the one on the left of the screen and controls the left climber.
-4. Both raise a hand to start. Keep both shoulders and wrists in view for the ready check.
-5. Optional, for positions in metres: both stand upright at 2 m with shoulders and hips visible, then press `C` in the webcam window (`--calibration-distance` changes the 2 m). A rejected calibration leaves the previous one intact; the terminal explains why.
+4. Distance from the camera is estimated from torso size, so no calibration is needed to start. For more accurate positions, press `C` in the webcam window and both stand upright at 2 m before the 5 second countdown ends (`--calibration-distance` changes the 2 m). A rejected calibration leaves the previous one intact; the terminal explains why.
+5. Both raise a hand to start. Keep both shoulders and wrists in view. Before starting or restarting, the game checks each player's estimated camera distance: 1.5-3 m by default, adjustable on `ClimberInput`. Follow the player's "step closer/back" message. This check does not interrupt an active climb.
+
+When the tracking stops, the terminal prints how long each part of the webcam loop took. `play.bat --camera-thread` reads the webcam in a background thread. In our test that gave 19.5 instead of 17.5 tracked frames per second, but each frame reached the game about 20 ms later (64.5 instead of 44.8 ms median), so it is off by default.
+
+The face photos follow each player's head tilt. Eye landmarks provide roll; yaw and pitch are not estimated. Photos use the upright, mirrored SFace crop so the tilt is applied only once in Unity.
 
 For development, run the game in the Unity editor instead: open `Assets/Scenes/ClimbingRoom.unity`, press Play, then run `python main.py --webcam` from `Python/`. Without a webcam, `python main.py --demo` sends two fake players.
 
 ## How to play
 
-- Reach up with a hand to grab the hold nearest to it, pull down to lift the climbers, lower the hand below the chest to let go.
+- Raise an arm straight up until the hand touches a hold to grab it. Pull it down to your shoulder to lift the climbers, then drop it to your stomach to let go. Moving a raised hand sideways moves the climber's hand.
 - Your left hand moves the arm on the left of the screen, like a mirror.
+- Grabbing with your other hand transfers your grip to that hand.
+- If the camera briefly loses a player, for example when a hand covers the face, their climber keeps holding for 2 seconds.
 - Cracked holds break a few seconds after they are grabbed.
-- At the top, the body stays in place. Both players lower their hands and then raise one to climb again. Missing tracking does not count as lowering hands.
+- At the top, the body stays in place. Both players lower their hands and then raise one to climb again. Both players must be visible and within the starting distance to restart.
 
 | Where | Key | What |
 |---|---|---|
