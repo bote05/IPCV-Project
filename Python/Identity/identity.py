@@ -292,15 +292,15 @@ class Identity:
                 assigned.add(bestP1)
                 taken.add(1)
                 self.known[1] = center(poses[bestP1])
-
+                facesMatched[1] = hConfP1
             bestP2 = self._matchFaceInitial(poses, hConfP2, duplicates, assigned)
             
             if bestP2 is not None:
                 ids[bestP2] = 2
                 taken.add(2)
                 self.known[2] = center(poses[bestP2])
-            
-            return ids, (hConfP1, hConfP2)
+                facesMatched[2] = hConfP2
+            return ids, facesMatched
         else:
             if self.missingIdList and faces:
                 for m in self.missingIdList:
@@ -322,7 +322,7 @@ class Identity:
                         assigned.add(bestP)
 
             faceOfPose = {i: self._matchFace(pose, faces) for i, pose in enumerate(poses)}        
-            ids, taken = self._poseIdentityExists(poses, previousPoses, duplicates, taken, ids)
+            ids, taken = self._poseIdentityExists(poses, previousPoses, duplicates, taken, ids,faceOfPose)
             leftover = [i for i in range(len(poses)) if ids[i] is None and i not in duplicates]
             leftover.sort(key=lambda i: (-self._faceGap(faceOfPose[i]), center(poses[i])[0]))
             for i in leftover:
