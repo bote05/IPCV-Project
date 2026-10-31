@@ -116,9 +116,12 @@ def validate_players(players: tuple[PlayerState, ...]) -> None:
 
 
 def encode_frame(players: Iterable[PlayerState], *, session_id: str, sequence: int,
-                 captured_time_s: float, sent_time_s: float, clock: str) -> bytes:
+                 captured_time_s: float, sent_time_s: float, clock: str,
+                 image_size: tuple[int, ...] = ()) -> bytes:
     players = tuple(players)
     validate_players(players)
+    if image_size and (len(image_size) != 2 or any(type(v) is not int or v <= 0 for v in image_size)):
+        raise ValueError("image_size must be empty or two positive integers: width, height")
     if not valid_session_id(session_id):
         raise ValueError("session_id must be a UUID's 32-character hex string")
     if type(sequence) is not int or not 0 <= sequence <= 2**63 - 1:
@@ -130,7 +133,7 @@ def encode_frame(players: Iterable[PlayerState], *, session_id: str, sequence: i
     packet = json.dumps({
         "session_id": session_id, "sequence": sequence,
         "clock": clock, "captured_time_s": captured_time_s, "sent_time_s": sent_time_s,
-        "players": [asdict(p) for p in players],
+        "image_size": list(image_size), "players": [asdict(p) for p in players],
     }, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(packet) > MAX_PACKET_BYTES:
         raise ValueError(f"Tracking snapshot exceeds {MAX_PACKET_BYTES} bytes")

@@ -35,10 +35,18 @@ public sealed class BridgePlayModeTests
         Assert.That(f.players[1].world_position_m, Is.EqualTo(new double[] { 0.4, 0, 2 }));
         Assert.That(f.players[0].head_rotation_deg.Length, Is.EqualTo(3));
         Assert.That(f.players[1].hand_raised, Is.EqualTo(new[] { false, true }));
+        Assert.That(f.Aspect, Is.EqualTo(1280f / 720f).Within(0.0001));
         Assert.That(f.ProcessingMs, Is.EqualTo(100).Within(0.001));
         Assert.That(JsonUtility.ToJson(f), Does.Not.Contain("processing_ms"));
         f.sent_time_s += 0.001;
         Assert.That(f.ProcessingMs, Is.EqualTo(101).Within(0.001));
+        foreach (int[] size in new[] { new[] { 0, 720 }, new[] { 1280, -1 }, new[] { 1280 } })
+        {
+            f.image_size = size;
+            Assert.That(f.IsValid(), Is.False);
+        }
+        f.image_size = new int[0];
+        Assert.That(f.IsValid(), Is.True);
         f.players[0].pose[0].position[0] = double.NaN;
         Assert.That(f.IsValid(), Is.False);
     }

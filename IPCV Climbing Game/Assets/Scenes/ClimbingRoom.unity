@@ -19272,6 +19272,8 @@ GameObject:
   - component: {fileID: 1157902396}
   - component: {fileID: 1157902395}
   - component: {fileID: 1157902398}
+  - component: {fileID: 1157902399}
+  - component: {fileID: 1157902400}
   m_Layer: 0
   m_Name: Udp Receiver
   m_TagString: Untagged
@@ -19292,7 +19294,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::IPCV.Game.ClimberInput
   receiver: {fileID: 1157902396}
-  useTracking: 0
+  useTracking: 1
   reachScale: 1.8
   restReach: 1.35
   restHeight: -0.6
@@ -19344,6 +19346,31 @@ MonoBehaviour:
   m_EditorClassIdentifier: IPCV.Bridge::IPCV.Bridge.UdpFaceReceiver
   port: 5006
   staleAfterSeconds: 2
+--- !u!114 &1157902399
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1157902394}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1929c3eff00a432a8b4446c7c0857674, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: IPCV.Bridge::IPCV.Bridge.BridgeMetrics
+--- !u!114 &1157902400
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1157902394}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 68b100d6594b482e86c6a6f3dbb5ebcf, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: IPCV.Bridge::IPCV.Bridge.BridgeDebugView
+  showPanel: 0
 --- !u!1 &1160871899
 GameObject:
   m_ObjectHideFlags: 0

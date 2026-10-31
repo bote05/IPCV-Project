@@ -19,8 +19,12 @@ namespace IPCV.Bridge
         public long sequence;
         public string clock;
         public double captured_time_s, sent_time_s;
+        public int[] image_size;
         public PlayerState[] players;
         public double ProcessingMs => (sent_time_s - captured_time_s) * 1000;
+        // Width / height of the camera image. Multiply a normalized x by this to compare it with a normalized y.
+        public float Aspect => image_size != null && image_size.Length == 2 && image_size[1] > 0
+            ? (float)image_size[0] / image_size[1] : 1f;
 
         public bool IsValid()
         {
@@ -29,6 +33,8 @@ namespace IPCV.Bridge
                 || (clock != "qpc" && clock != "local") || !Numbers.Finite(captured_time_s)
                 || !Numbers.Finite(sent_time_s) || captured_time_s <= 0 || sent_time_s < captured_time_s
                 || players == null || players.Length > 2) return false;
+            if (image_size != null && image_size.Length != 0
+                && (image_size.Length != 2 || image_size[0] <= 0 || image_size[1] <= 0)) return false;
             int ids = 0;
             foreach (PlayerState p in players)
             {

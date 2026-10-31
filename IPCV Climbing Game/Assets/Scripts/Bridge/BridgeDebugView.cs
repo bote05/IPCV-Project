@@ -1,10 +1,12 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace IPCV.Bridge
 {
     [RequireComponent(typeof(UdpFrameReceiver), typeof(UdpFaceReceiver), typeof(BridgeMetrics))]
     public sealed class BridgeDebugView : MonoBehaviour
     {
+        public bool showPanel;
         private UdpFrameReceiver receiver;
         private UdpFaceReceiver faces;
         private BridgeMetrics metrics;
@@ -16,8 +18,21 @@ namespace IPCV.Bridge
             metrics = GetComponent<BridgeMetrics>();
         }
 
+        private void Update()
+        {
+            if (Keyboard.current != null && Keyboard.current.f1Key.wasPressedThisFrame) showPanel = !showPanel;
+        }
+
         private void OnGUI()
         {
+            if (!showPanel)
+            {
+                // One line for the game view and the video; F1 opens the full panel.
+                string latency = double.IsNaN(receiver.CaptureToApplyMs) ? "" : $" | capture -> Unity {receiver.CaptureToApplyMs:F0} ms";
+                GUI.Label(new Rect(12, Screen.height - 28, 600, 24),
+                    $"Tracking {metrics.TrackingFps:F0} FPS | Unity {metrics.UnityFps:F0} FPS{latency} | F1 bridge panel");
+                return;
+            }
             GUILayout.BeginArea(new Rect(12, 12, Mathf.Min(550, Screen.width - 24), Screen.height - 24), GUI.skin.box);
             scroll = GUILayout.BeginScrollView(scroll);
             GUILayout.Label("IPCV bridge | --demo uses synthetic data");

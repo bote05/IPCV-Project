@@ -50,12 +50,11 @@ class RawPose:
 
 
 class PoseDetector:
-    """Runs the landmarker in VIDEO mode, which tracks people between frames instead of
-    re-running the person detector every frame, and returns the selected joints per person.
+    """Runs person detection on every frame so a second player can enter while another is tracked.
 
     Detections whose torso is shorter than `min_torso` of the frame height are dropped: the
     landmarker occasionally fits a collapsed skeleton onto background clutter, with high joint
-    confidence, while a player in front of a webcam has a torso of at least ~15% of the frame.
+    confidence.
     """
 
     def __init__(
@@ -72,24 +71,19 @@ class PoseDetector:
             raise FileNotFoundError(f"{path} not found, run `python -m Pose.tools.download_models` first")
         options = PoseLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(path)),
-            running_mode=RunningMode.VIDEO,
+            running_mode=RunningMode.IMAGE,
             num_poses=num_poses,
             min_pose_detection_confidence=min_detection_confidence,
             min_pose_presence_confidence=min_presence_confidence,
             min_tracking_confidence=min_tracking_confidence,
         )
         self._landmarker = PoseLandmarker.create_from_options(options)
-        self._last_timestamp_ms = -1
         self._min_torso = min_torso
 
     def detect(self, frame_bgr: np.ndarray, t: float) -> list[RawPose]:
-        """Detect everyone in `frame_bgr`; `t` is the capture time in seconds."""
-        # VIDEO mode rejects timestamps that do not strictly increase.
-        timestamp_ms = max(round(t * 1000), self._last_timestamp_ms + 1)
-        self._last_timestamp_ms = timestamp_ms
-
+        """Detect everyone in `frame_bgr`; `t` is the capture time in seconds (unused in IMAGE mode)."""
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        result = self._landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), timestamp_ms)
+        result = self._landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
         height, width = frame_bgr.shape[:2]
         poses = [_to_raw_pose(landmarks, width, height) for landmarks in result.pose_landmarks]
         everything = np.ones(NUM_JOINTS, dtype=bool)

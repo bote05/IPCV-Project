@@ -1,15 +1,17 @@
-"""Run the bridge demo or the real webcam tracking."""
+"""Run the bridge demo, the real webcam tracking, or the whole game (--play)."""
 
 import argparse
-import importlib
 import logging
 import math
 from pathlib import Path
+import subprocess
 import time
 
 from bridge.demo import demo_players
 from bridge.pipeline import TrackingResult
 from bridge.sender import UdpSender
+
+GAME = Path(__file__).resolve().parents[1] / "Build" / "ClimbingGame.exe"
 
 
 def positive_fps(value: str) -> float:
@@ -46,13 +48,17 @@ def send_faces(sender: UdpSender, result: TrackingResult) -> None:
                 logging.warning("Skipped face crop for player %s: %s", player_id, error)
 
 
-def run_camera(sender: UdpSender, processor, camera_index: int, fps: float) -> None:
+def run_camera(sender: UdpSender, processor, camera_index: int, fps: float,
+               draw=None, on_key=None, size: tuple[int, int] | None = None, game=None) -> None:
     import cv2  # Only needed for the webcam, not the demo.
 
     camera = cv2.VideoCapture(camera_index)
     if not camera.isOpened():
         camera.release()
         raise RuntimeError(f"Could not open webcam {camera_index}")
+    if size:
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
     failed = False
     last_faces = 0.0
     try:
@@ -67,7 +73,7 @@ def run_camera(sender: UdpSender, processor, camera_index: int, fps: float) -> N
                 result = processor(frame, captured)  # Normal BGR image and capture time in seconds.
                 if not isinstance(result, TrackingResult):
                     raise TypeError("Processor must return bridge.pipeline.TrackingResult")
-                sender.send(result.players, captured_time_s=captured)
+                sender.send(result.players, captured_time_s=captured, image_size=result.image_size)
                 if failed:
                     logging.info("Frame processor recovered")
                 failed = False
@@ -80,9 +86,12 @@ def run_camera(sender: UdpSender, processor, camera_index: int, fps: float) -> N
                 if captured - last_faces >= 0.1:
                     send_faces(sender, result)
                     last_faces = captured
-            cv2.imshow("Webcam preview (mirrored display only; Q quits)", cv2.flip(frame, 1))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            cv2.imshow("Webcam preview (mirrored display only; Q quits)", draw(frame) if draw else cv2.flip(frame, 1))
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), ord("Q"), 27) or (game is not None and game.poll() is not None):
                 break
+            if on_key:
+                on_key(key)
             time.sleep(max(0, 1 / fps - (time.perf_counter() - started)))
     finally:
         camera.release()
@@ -93,9 +102,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Python-to-Unity tracking bridge")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--demo", action="store_true", help="Synthetic two-player data and placeholder JPEGs")
-    mode.add_argument("--webcam", action="store_true", help="Run the team's frame processor")
-    parser.add_argument("--processor", help="Python module:function taking (BGR frame, capture time) and returning TrackingResult")
+    mode.add_argument("--webcam", action="store_true", help="Track two players with Face, Pose and Identity")
+    mode.add_argument("--play", action="store_true", help="Start the built game and the webcam tracking together")
     parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--width", type=int, default=1280, help="Requested camera width")
+    parser.add_argument("--height", type=int, default=720, help="Requested camera height")
+    parser.add_argument("--calibration-distance", type=float, default=2.0,
+                        help="Metres from the camera where players stand when C is pressed")
     parser.add_argument("--port", type=int, default=5005)
     parser.add_argument("--face-port", type=int, default=5006)
     parser.add_argument("--fps", type=positive_fps, default=30.0)
@@ -103,20 +116,21 @@ def main() -> None:
     args = parser.parse_args()
     if not all(1 <= p <= 65535 for p in (args.port, args.face_port)) or args.port == args.face_port:
         parser.error("Ports must be distinct and in 1..65535")
-    if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0 or args.webcam):
+    if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0 or not args.demo):
         parser.error("--duration must be positive and is only supported with --demo")
-    processor = None
-    if args.webcam:
-        if not args.processor or ":" not in args.processor:
-            parser.error("--webcam requires --processor module:function; teammate modules are not integrated yet")
+    if args.play and not GAME.is_file():
+        parser.error(f"The game is not built yet: {GAME} is missing. See README.md, 'Build the game'")
+    if args.width <= 0 or args.height <= 0:
+        parser.error("Camera width and height must be positive")
+    if not math.isfinite(args.calibration_distance) or args.calibration_distance <= 0:
+        parser.error("--calibration-distance must be a positive number of metres")
+    tracking = game = None
+    if not args.demo:
+        from tracking import GameTracking  # Loads MediaPipe, so not for the demo.
         try:
-            module, function = args.processor.rsplit(":", 1)
-            processor = getattr(importlib.import_module(module), function)
-            if not callable(processor):
-                raise TypeError("Processor is not callable")
-            import cv2
-        except (ImportError, AttributeError, TypeError) as error:
-            parser.error(f"Cannot load camera processor: {error}. See Python/bridge/README.md")
+            tracking = GameTracking(args.calibration_distance)
+        except FileNotFoundError as error:
+            parser.error(f"{error}. See README.md for the model downloads")
     logging.basicConfig(level=logging.INFO)
     with UdpSender(port=args.port, face_port=args.face_port) as sender:
         print(f"{'SIMULATED' if args.demo else 'WEBCAM'} tracking -> 127.0.0.1:{args.port}, faces -> {args.face_port}")
@@ -124,11 +138,20 @@ def main() -> None:
             if args.demo:
                 run_demo(sender, args.fps, args.duration)
             else:
-                run_camera(sender, processor, args.camera, args.fps)
+                if args.play:
+                    game = subprocess.Popen([str(GAME), "-screen-fullscreen", "0",
+                                             "-screen-width", "1280", "-screen-height", "720"])
+                run_camera(sender, tracking.process, args.camera, args.fps, tracking.draw, tracking.on_key,
+                           (args.width, args.height), game)
         except KeyboardInterrupt:
             pass
         finally:
             sender.send(())
+            if tracking:
+                tracking.close()
+            if game and game.poll() is None:
+                game.terminate()
+                game.wait(10)
             print(f"Sent {sender.frames_sent} states, {sender.faces_sent} crops; buffer drops {sender.frames_dropped}.")
 
 

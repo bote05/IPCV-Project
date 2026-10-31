@@ -212,6 +212,17 @@ class CameraRunnerTests(unittest.TestCase):
         sender.send.assert_called_once_with(())
         camera.release.assert_called_once()
 
+    def test_game_exit_stops_camera(self):
+        cv, camera, frame = self.fake_cv()
+        processor = Mock(return_value=TrackingResult())
+        game = Mock()
+        game.poll.return_value = 0
+        with patch.dict(sys.modules, {"cv2": cv}):
+            main.run_camera(Mock(), processor, 0, 30, game=game)
+        processor.assert_called_once()
+        camera.release.assert_called_once()
+        cv.destroyAllWindows.assert_called_once()
+
 
 class PoseAdapterTests(unittest.TestCase):
     def data(self):

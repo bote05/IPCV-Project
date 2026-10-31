@@ -9,7 +9,7 @@ controlled behaviour when joints are uncertain or missing.
 frame ─► PoseDetector ─► RawPose per person ─► PoseTracker ─► PlayerPose per player ─► to_dict() ─► UDP bridge
          MediaPipe Pose     13 joints + confidence    │
          Landmarker         (implausible poses        ├─ association (Hungarian, predicted joints)
-         (VIDEO mode)        dropped)                 ├─ KeypointFilter: gating, One Euro, gap prediction
+         (IMAGE mode)        dropped)                 ├─ KeypointFilter: gating, One Euro, gap prediction
                                                       └─ MotionAnalyzer: body frame, signals, events
 ```
 
@@ -20,7 +20,7 @@ MediaPipe has no wheels for Python 3.14; use Python 3.12. From the repository ro
 ```
 py -3.12 -m venv .venv
 .venv\Scripts\activate
-pip install -r Python/Pose/requirements.txt
+pip install -r Python/requirements.txt
 cd Python
 python -m Pose.tools.download_models    # Models/pose_landmarker_full.task (add lite heavy for comparisons)
 python -m pytest Pose/tests
@@ -60,7 +60,7 @@ tracker = PoseTracker()
 
 # once per frame; t is the capture time in seconds
 poses = detector.detect(frame, t)
-ids = identity.assign(poses)                  # Task 3: one player id per pose, None to ignore a pose
+ids, _ = identity.assign(poses, previous, faces)  # Task 3: one player id per pose, None to ignore a pose
 players = tracker.update(poses, t, ids)
 messages = [p.to_dict((frame.shape[1], frame.shape[0]), mirror=True) for p in players]
 ```
@@ -104,8 +104,10 @@ BlazePose landmarks). Climbing needs the hands and arms, the torso as a referenc
 legs and hips for jumps. Left and right are the player's own sides: since the image is never
 flipped before detection, MediaPipe's labels match the player's anatomy.
 
-**Detector.** MediaPipe Pose Landmarker in VIDEO mode, which tracks people between frames instead
-of running the person detector every frame. The `full` model is the default (development laptop
+**Detector.** MediaPipe Pose Landmarker in IMAGE mode, so the person detector runs on every frame.
+VIDEO mode skips the detector while it can track someone, so a second player who stood still was
+not picked up: on a two-player recording it found both in 43% of frames, IMAGE mode in 80%, for
+31 instead of 21 ms per frame. The `full` model is the default (development laptop
 CPU, 768x432 video, `num_poses=2`: lite 16 ms, full 21 ms, heavy 49 ms per frame). Joint
 confidence is min(visibility, presence). The landmarker sometimes fits a collapsed skeleton onto
 background clutter with high confidence, so poses with a torso under 5% of the frame height are

@@ -8,6 +8,7 @@ from .protocol import Joint, JointState, Landmark, MotionEvent, PlayerState
 class TrackingResult:
     players: tuple[PlayerState, ...] = ()
     face_jpegs: dict[int, bytes] = field(default_factory=dict)
+    image_size: tuple[int, ...] = ()  # Camera width and height, so Unity can undo the normalization's aspect.
 
 
 def player_from_pose(data: dict) -> PlayerState:

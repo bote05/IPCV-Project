@@ -31,13 +31,14 @@ class UdpSender:
             return False
         return True
 
-    def send(self, players: Iterable[PlayerState], *, captured_time_s: float | None = None) -> bool:
+    def send(self, players: Iterable[PlayerState], *, captured_time_s: float | None = None,
+             image_size: tuple[int, ...] = ()) -> bool:
         """captured_time_s should be time.perf_counter() right after reading the camera."""
         sent_time_s = time.perf_counter()
         packet = encode_frame(
             players, session_id=self.session_id, sequence=self.sequence,
             captured_time_s=sent_time_s if captured_time_s is None else captured_time_s,
-            sent_time_s=sent_time_s, clock="qpc" if os.name == "nt" else "local",
+            sent_time_s=sent_time_s, clock="qpc" if os.name == "nt" else "local", image_size=image_size,
         )
         self.sequence += 1
         sent = self._send(packet, self._destination)

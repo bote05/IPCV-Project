@@ -1,20 +1,16 @@
-"""Run with Pose's branch and the shared requirements installed; no camera or model needed."""
+"""Exercise the pose-to-bridge contract without a camera or model."""
 
-import importlib.util
 import json
 import unittest
+
+import numpy as np
+from Pose import PoseTracker, RawPose
+from Pose.skeleton import JOINT_NAMES
 
 from bridge.pipeline import player_from_pose
 from bridge.protocol import Joint, JointState, encode_frame
 
-POSE_AVAILABLE = importlib.util.find_spec("Pose.tracker") is not None
-if POSE_AVAILABLE:
-    import numpy as np
-    from Pose import PoseTracker, RawPose
-    from Pose.skeleton import JOINT_NAMES
 
-
-@unittest.skipUnless(POSE_AVAILABLE, "Pose branch has not been merged or added to PYTHONPATH")
 class PoseIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tracker = PoseTracker()

@@ -38,11 +38,14 @@ namespace IPCV.Game
         public int GripCount { get; private set; }
         public float BestHeight { get; private set; }
         public bool Finished { get; private set; }
+        public bool WaitingForPlayers { get; private set; }
         public int Falls { get; private set; }
         private Rigidbody body;
         private Vector3 start;
         private int inputVersion;
         private readonly bool[] mustRelease = new bool[4];
+        // At the top: each player has lowered their hands since, so raising one now means "again".
+        private readonly bool[] loweredAtTop = new bool[2];
         // Where each drawn hand is compared to its shoulder. It slides toward the real target.
         private readonly Vector3[] drawnOffsets = new Vector3[4];
         // Hip bending of each half: the angle in degrees and how fast it changes.
@@ -68,6 +71,8 @@ namespace IPCV.Game
         {
             body = GetComponent<Rigidbody>();
             start = transform.position;
+            WaitingForPlayers = input != null && input.useTracking;
+            body.isKinematic = WaitingForPlayers;
 
             // Remember how everything sits before any bending.
             for (int i = 0; i < 4; i++)
@@ -116,6 +121,27 @@ namespace IPCV.Game
                 Restart();
             }
 
+            // With the camera, both players lower their hands and then raise one to climb again.
+            if (Finished && input != null && input.useTracking)
+            {
+                for (int player = 0; player < 2; player++)
+                {
+                    if (!input.handsObserved[player])
+                    {
+                        loweredAtTop[player] = false;
+                    }
+                    else if (!input.handRaised[player])
+                    {
+                        loweredAtTop[player] = true;
+                    }
+                }
+                bool bothRaised = BothReady();
+                if (loweredAtTop[0] && loweredAtTop[1] && bothRaised)
+                {
+                    Restart();
+                }
+            }
+
             // Fell off the bottom of the room.
             if (transform.position.y < -4f)
             {
@@ -147,7 +173,17 @@ namespace IPCV.Game
             {
                 inputVersion = input.ModeVersion;
                 ReleaseAll();
+                WaitingForPlayers = input.useTracking;
+                loweredAtTop[0] = loweredAtTop[1] = false;
             }
+
+            if (WaitingForPlayers && BothReady())
+            {
+                WaitingForPlayers = false;
+                for (int i = 0; i < 4; i++) mustRelease[i] = false;
+            }
+            body.isKinematic = WaitingForPlayers || (Finished && input.useTracking);
+            if (body.isKinematic) return;
 
             Vector3 targetSum = Vector3.zero;
             GripCount = 0;
@@ -447,6 +483,7 @@ namespace IPCV.Game
             {
                 hold.ResetHold();
             }
+            body.isKinematic = false;
             body.position = start;
             body.rotation = Quaternion.identity;
             body.linearVelocity = Vector3.zero;
@@ -455,8 +492,18 @@ namespace IPCV.Game
             {
                 hipAngle[half] = 0f;
                 hipSpeed[half] = 0f;
+                loweredAtTop[half] = false;
             }
             Finished = false;
+            BestHeight = 0;
+            WaitingForPlayers = input != null && input.useTracking;
+            body.isKinematic = WaitingForPlayers;
+        }
+
+        private bool BothReady()
+        {
+            return input.handsObserved[0] && input.handsObserved[1]
+                && input.handRaised[0] && input.handRaised[1];
         }
 
         private void OnDestroy()

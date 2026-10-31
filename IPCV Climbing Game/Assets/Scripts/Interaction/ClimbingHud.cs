@@ -35,7 +35,15 @@ namespace IPCV.Game
 
             heightText.text = $"{climber.BestHeight:00.0}<size=24> m</size>";
 
-            if (climber.Finished)
+            if (climber.Finished && input.useTracking)
+            {
+                statusText.text = "TOP REACHED!   LOWER, THEN BOTH RAISE A HAND / AGAIN";
+            }
+            else if (climber.WaitingForPlayers)
+            {
+                statusText.text = "BOTH RAISE A HAND / START";
+            }
+            else if (climber.Finished)
             {
                 statusText.text = "TOP REACHED!   R / AGAIN";
             }

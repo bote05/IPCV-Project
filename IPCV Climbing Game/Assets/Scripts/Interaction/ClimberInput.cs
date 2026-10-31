@@ -5,6 +5,7 @@ using UnityEngine.InputSystem;
 namespace IPCV.Game
 {
     // Only this component knows about tracking or keyboard controls.
+    [DefaultExecutionOrder(-5)]
     public sealed class ClimberInput : MonoBehaviour
     {
         public UdpFrameReceiver receiver;
@@ -19,6 +20,9 @@ namespace IPCV.Game
         public readonly bool[] wantsGrip = new bool[4];
         public readonly bool[] canGrab = new bool[4];
         public readonly bool[] playerSeen = new bool[2];
+        // Pose's raised-hand signal, separate from the game's grip latch.
+        public readonly bool[] handRaised = new bool[2];
+        public readonly bool[] handsObserved = new bool[2];
         // Keyboard: hand height above the shoulder. The arms start out to the side, a little raised.
         private readonly float[] handHeights = { 0.6f, 0.6f, 0.6f, 0.6f };
         private readonly float[] sideReach = { 1f, 1f };
@@ -207,6 +211,12 @@ namespace IPCV.Game
                 }
             }
 
+            float aspect = 1f;
+            if (frame != null)
+            {
+                aspect = frame.Aspect;
+            }
+
             for (int player = 0; player < 2; player++)
             {
                 PlayerState pose = null;
@@ -215,6 +225,9 @@ namespace IPCV.Game
                 {
                     playerSeen[player] = receiver.TryGetPlayer(player + 1, out pose);
                 }
+                handRaised[player] = playerSeen[player] && pose.hand_raised.Length == 2
+                    && (pose.hand_raised[0] || pose.hand_raised[1]);
+                int observedArms = 0;
 
                 for (int side = 0; side < 2; side++)
                 {
@@ -230,12 +243,13 @@ namespace IPCV.Game
 
                     Vector2 offset;
                     bool fresh;
-                    bool armFound = TryArm(pose, side, out offset, out fresh);
+                    bool armFound = TryArm(pose, side, aspect, out offset, out fresh);
                     if (!armFound)
                     {
                         trackingGrip[hand] = false;
                         continue;
                     }
+                    if (fresh) observedArms++;
 
                     // Both arms point outwards from their own torso. The bridge already mirrors the image.
                     float direction = 1;
@@ -262,11 +276,13 @@ namespace IPCV.Game
                     wantsGrip[hand] = trackingGrip[hand];
                     canGrab[hand] = fresh;
                 }
+                handsObserved[player] = observedArms == 2 && pose.hand_raised.Length == 2;
             }
         }
 
         // Finds where one wrist is compared to its shoulder, measured in shoulder widths.
-        public static bool TryArm(PlayerState pose, int side, out Vector2 offset, out bool fresh)
+        // aspect is the camera's width / height, so x and y use the same unit.
+        public static bool TryArm(PlayerState pose, int side, float aspect, out Vector2 offset, out bool fresh)
         {
             offset = Vector2.zero;
             fresh = false;
@@ -275,10 +291,12 @@ namespace IPCV.Game
                 return false;
             }
 
-            PoseJoint wristJoint = PoseJoint.RightWrist;
+            // The climbers face the players like a mirror image. Side 0 is the arm on the right
+            // of the screen, so the player's right hand moves it.
+            PoseJoint wristJoint = PoseJoint.LeftWrist;
             if (side == 0)
             {
-                wristJoint = PoseJoint.LeftWrist;
+                wristJoint = PoseJoint.RightWrist;
             }
 
             PoseLandmark left;
@@ -297,9 +315,9 @@ namespace IPCV.Game
                 return false;
             }
 
-            Vector2 leftShoulder = new Vector2((float)left.position[0], (float)left.position[1]);
-            Vector2 rightShoulder = new Vector2((float)right.position[0], (float)right.position[1]);
-            Vector2 wristPoint = new Vector2((float)wrist.position[0], (float)wrist.position[1]);
+            Vector2 leftShoulder = new Vector2((float)left.position[0] * aspect, (float)left.position[1]);
+            Vector2 rightShoulder = new Vector2((float)right.position[0] * aspect, (float)right.position[1]);
+            Vector2 wristPoint = new Vector2((float)wrist.position[0] * aspect, (float)wrist.position[1]);
 
             // Shoulder width is the unit, so the distance to the camera does not matter.
             float width = Vector2.Distance(leftShoulder, rightShoulder);
@@ -308,10 +326,10 @@ namespace IPCV.Game
                 return false;
             }
 
-            Vector2 shoulder = rightShoulder;
+            Vector2 shoulder = leftShoulder;
             if (side == 0)
             {
-                shoulder = leftShoulder;
+                shoulder = rightShoulder;
             }
 
             // Image y points down, so flip it: a positive y means the wrist is above the shoulder.

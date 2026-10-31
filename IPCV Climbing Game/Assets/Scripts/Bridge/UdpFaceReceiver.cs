@@ -53,6 +53,9 @@ namespace IPCV.Bridge
         private void Update()
         {
             if (inbox == null) return;
+            for (int id = 1; id <= 2; id++)
+                if (crops[id] != null && (!tracking.TryGetPlayer(id, out PlayerState current) || current.face_bbox.Length != 4))
+                    crops[id].valid = false;
             if (inbox.Error != null)
             {
                 LastError = inbox.Error;

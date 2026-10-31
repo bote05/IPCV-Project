@@ -6,12 +6,15 @@ How persistent player identities (Task 3) plug into pose tracking (Task 2).
 
 ```python
 from Pose import PoseDetector, PoseTracker
+from Identity.identity import Identity
 
 detector = PoseDetector("full", num_poses=2)
 tracker = PoseTracker()
+identity = Identity(imageSize=(width, height))
+previous = []
 
 poses = detector.detect(frame, t)          # t: capture time in seconds
-ids = identity.assign(poses, previous)     # one player id per pose
+ids, faces_by_id = identity.assign(poses, previous, faces)   # one player id per pose; FaceObservation per player id
 previous = tracker.update(poses, t, ids)   # list[PlayerPose], used for the next frame
 ```
 
@@ -34,7 +37,7 @@ detections on background objects.
 ## Output: what to pass as `ids`
 
 - One entry per pose, in the order `detect` returned them.
-- Any integers, e.g. 1 and 2. They become `PlayerPose.id` and the `id` in the JSON sent to Unity.
+- The game uses 1, 2 or `None`. These become `PlayerPose.id` and the `id` in the JSON sent to Unity.
 - `None` discards a pose: a spectator, a false detection, or a duplicate. When `ids` are given the
   tracker does not remove duplicate detections of the same person itself.
 - The same id may not appear twice in one frame. That, or a list of the wrong length, raises
@@ -99,3 +102,9 @@ Left to identity:
 Without `ids`, `tracker.update(poses, t)` links poses frame to frame by itself and numbers tracks
 0, 1, 2, and so on. That is enough for the demo and evaluation, but a person who leaves and comes
 back gets a new number.
+
+## Integrated behaviour
+
+Pass unmirrored face observations and the image size alongside the raw poses. Face-to-pose matches are one-to-one. Short gaps use the previous pose; after its usable joints are lost, a new face match is required to recover an ID. Template scores are simple appearance hints and can be wrong under lighting changes, head turns or occlusion.
+
+`PositionEstimator` is calibrated explicitly when both players have tracked shoulders and hips. The pipeline sends camera-relative metres with x right, y down and z forward, without mirroring. The assumed camera field of view and torso foreshortening limit accuracy. `test_distance` reports depth error and percentage error (0 to 100 for errors up to the reference distance); measurements at known distances still need collecting.

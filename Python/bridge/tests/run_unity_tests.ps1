@@ -6,7 +6,7 @@ $testRoot = Join-Path $env:TEMP ('ipcv-bridge-tests-' + [Guid]::NewGuid().ToStri
 New-Item -ItemType Directory -Path (Join-Path $testRoot 'Assets'), (Join-Path $testRoot 'Packages'), (Join-Path $testRoot 'ProjectSettings') | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'IPCV Climbing Game/Assets/Scripts/Bridge') -Destination (Join-Path $testRoot 'Assets/Bridge') -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'IPCV Climbing Game/ProjectSettings/ProjectVersion.txt') -Destination (Join-Path $testRoot 'ProjectSettings/ProjectVersion.txt')
-[IO.File]::WriteAllText((Join-Path $testRoot 'Packages/manifest.json'), '{"dependencies":{"com.unity.test-framework":"1.6.0","com.unity.modules.imageconversion":"1.0.0","com.unity.modules.imgui":"1.0.0","com.unity.modules.jsonserialize":"1.0.0"}}')
+[IO.File]::WriteAllText((Join-Path $testRoot 'Packages/manifest.json'), '{"dependencies":{"com.unity.test-framework":"1.6.0","com.unity.inputsystem":"1.19.0","com.unity.modules.imageconversion":"1.0.0","com.unity.modules.imgui":"1.0.0","com.unity.modules.jsonserialize":"1.0.0"}}')
 $env:IPCV_BRIDGE_ROOT = $root
 $env:IPCV_BRIDGE_PYTHON = (& python -c 'import sys; print(sys.executable)').Trim()
 $log = Join-Path $testRoot 'unity-test.log'

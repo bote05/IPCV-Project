@@ -1,4 +1,5 @@
 {
   "name": "IPCV.Bridge",
-  "rootNamespace": "IPCV.Bridge"
+  "rootNamespace": "IPCV.Bridge",
+  "references": ["Unity.InputSystem"]
 }
