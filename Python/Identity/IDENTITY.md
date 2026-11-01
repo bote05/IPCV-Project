@@ -14,7 +14,7 @@ identity = Identity(imageSize=(width, height))
 previous = []
 
 poses = detector.detect(frame, t)          # t: capture time in seconds
-ids, faces_by_id = identity.assign(poses, previous, faces)   # one player id per pose; FaceObservation per player id
+ids, faces_by_id = identity.assign(poses, previous, faces, t)   # one player id per pose; FaceObservation per player id
 previous = tracker.update(poses, t, ids)   # list[PlayerPose], used for the next frame
 ```
 

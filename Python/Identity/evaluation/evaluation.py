@@ -227,8 +227,8 @@ def evaluate_trial(
     nonplayers = 0
     false_assignments = 0
     unknown = 0
-    missing_raw_rows = 0
-    missing_identity_rows = 0
+    missing_raw_rows = len(identity_by_key.keys() - raw_by_key.keys())
+    missing_identity_rows = len(raw_by_key.keys() - identity_by_key.keys())
 
     by_timestamp = defaultdict(dict)
     observations = defaultdict(list)
@@ -242,9 +242,6 @@ def evaluate_trial(
         if lab in UNKNOWN:
             unknown += 1
             continue
-
-        if key not in raw_by_key:
-            missing_raw_rows += 1
 
         if lab in PLAYERS:
             player_poses += 1
@@ -268,11 +265,6 @@ def evaluate_trial(
 
             if pred is not None:
                 false_assignments += 1
-
-    # Count identity rows without corresponding raw pose rows.
-    missing_identity_rows = sum(
-        1 for key in identity_by_key if key not in raw_by_key
-    )
 
     # Evaluate timestamps where both players have ground-truth labels.
     eligible_timestamps = {
@@ -339,7 +331,10 @@ def evaluate_trial(
         for p in PLAYERS
     )
 
-    success = bool(both_seen and all_correct and switches == 0)
+    success = bool(
+        both_seen and all_correct and switches == 0
+        and unknown == 0 and missing_raw_rows == 0 and missing_identity_rows == 0
+    )
 
     result = {
         "trial_name": trial_name or Path(identified_poses_csv).stem,

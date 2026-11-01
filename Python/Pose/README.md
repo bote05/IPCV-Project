@@ -60,7 +60,7 @@ tracker = PoseTracker()
 
 # once per frame; t is the capture time in seconds
 poses = detector.detect(frame, t)
-ids, _ = identity.assign(poses, previous, faces)  # Task 3: one player id per pose, None to ignore a pose
+ids, _ = identity.assign(poses, previous, faces, t)  # Task 3: one player id per pose, None to ignore a pose
 players = tracker.update(poses, t, ids)
 messages = [p.to_dict((frame.shape[1], frame.shape[0]), mirror=True) for p in players]
 ```
