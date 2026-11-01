@@ -1,5 +1,8 @@
 import numpy as np
 from Pose import Joint, JointState, RawPose, PlayerPose
+import csv
+import json
+from pathlib import Path
 
 MIN_CONF = 0.6
 POSE_MATCH_GATE = 0.9       # mean joint distance / torso length
@@ -59,6 +62,10 @@ class Identity:
         self.faceScoreMargin = faceScoreMargin
         self.imageSize = imageSize
         self.known = {}
+        self.pose_file = None
+        self.pose_writer = None
+        self.identity_file = None
+        self.identity_writer = None
 
     def _head(self, pose):
         return pose.points[NOSE] if pose.confidence[NOSE] >= MIN_CONF else None
@@ -229,13 +236,13 @@ class Identity:
         
         return ids, taken
 
-    def assign(self, poses, previousPoses, faces):
+    def assign(self, poses, previousPoses, faces, t):
         ids = [None] * len(poses)
         duplicates = self._remove_duplicates(poses)
         taken = set()
         facesMatched = {}
         assigned = set()
-
+        self.init_pose_log()
         if not self.known:
             best_faces = self._bestInitialFaces([f for f in faces if f.detected])
 
@@ -257,7 +264,10 @@ class Identity:
                 taken.add(2)
                 self.known[2] = center(poses[bestP2])
                 facesMatched[2] = hConfP2
+            # self.write_pose_logs(t, poses)
+            # self.write_identity_logs(t, poses, ids)
             return ids, facesMatched
+        # self.write_pose_logs(t, poses)
         faceOfPose = self._matchFaces(poses, faces, duplicates)
         ids, taken = self._poseIdentityExists(poses, previousPoses, duplicates, taken, ids, faceOfPose)
         leftover = [i for i in range(len(poses)) if ids[i] is None and i not in duplicates]
@@ -274,4 +284,57 @@ class Identity:
                 self.known[pid] = center(poses[i])
                 if i in faceOfPose:
                     facesMatched[pid] = faceOfPose[i]
+        # self.write_identity_logs(t, poses, ids)
         return ids, facesMatched
+
+    def init_pose_logs(self, pose_filename="raw_poses.csv", identity_filename="identified_poses.csv"):
+        # Raw pose data
+        self.pose_file = open(pose_filename, "w", newline="", encoding="utf-8")
+        self.pose_writer = csv.writer(self.pose_file)
+
+        self.pose_writer.writerow([
+            "timestamp",
+            "pose_index",
+            "joints",
+            "confidence"
+        ])
+
+        # Identity predictions and ground truth
+        self.identity_file = open(identity_filename, "w", newline="", encoding="utf-8")
+        self.identity_writer = csv.writer(self.identity_file)
+
+        self.identity_writer.writerow([
+            "timestamp",
+            "pose_index",
+            "predicted_id",
+            "actual_result"
+        ])
+
+    def write_pose_logs(self, timestamp, poses):
+        for pose_index, pose in enumerate(poses):
+            self.pose_writer.writerow([
+                timestamp,
+                pose_index,
+                json.dumps(pose.points.tolist()),
+                json.dumps(pose.confidence.tolist())
+            ])
+
+        self.pose_file.flush()
+
+    def write_identity_logs(self, timestamp, poses, ids):
+        if len(poses) != len(ids):
+            raise ValueError("Number of poses and IDs must match.")
+
+        for pose_index, player_id in enumerate(ids):
+            self.identity_writer.writerow([
+                timestamp,
+                pose_index,
+                "" if player_id is None else player_id,
+                ""
+            ])
+
+        self.identity_file.flush()
+
+    def close_pose_logs(self):
+        self.pose_file.close()
+        self.identity_file.close()
