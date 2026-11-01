@@ -2,6 +2,23 @@
 
 2 player climbing game controlled with the webcam. The two climbers are joined at the waist, so they only get up the wall together. Python does the tracking (OpenCV, MediaPipe) and sends it to Unity over UDP. Unity runs the game.
 
+## Quick start (Windows)
+
+The game build and required models are included. You do not need Unity to play.
+
+1. Install Python 3.12 and extract the ZIP if you downloaded the project that way.
+2. Open PowerShell in the project folder, next to `play.bat`, and run:
+
+   ```powershell
+   py -3.12 -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r Python/requirements.txt
+   ```
+
+3. Double-click `play.bat`.
+4. Both players stand about 2 m from the camera, wait for `P1` and `P2`, then each raise a hand to start.
+
+The default is camera 0. To choose another webcam, run `.\play.bat --camera 1` in PowerShell; try another index if needed. Close the game or press `Q` in the webcam window to stop.
+
 ## Task Division
 | Task | Name | What | Folders |
 |---|---|---|---|
@@ -13,22 +30,22 @@
 
 **Only edit your own folders.** If you need something changed in someone else's code, just ask them.
 
-## Setup
+## Restore models (optional)
 
-Use Python 3.12 and Unity 6000.4.8f1 for the tested setup. From the repository root:
+The three runtime models are included in `Models/`. If any are missing, restore them from the project root with:
 
 ```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r Python/requirements.txt
 cd Python
-python -m Pose.tools.download_models   # Models/pose_landmarker_full.task
-python -m Face.download_model          # Models/face_detection_yunet_2023mar.onnx, face_recognition_sface_2021dec.onnx
+..\.venv\Scripts\python.exe -m Pose.tools.download_models
+..\.venv\Scripts\python.exe -m Face.download_model
+cd ..
 ```
 
-## Build the game (once)
+Model sources and licences are listed in [Models/README.md](Models/README.md).
 
-Build the Unity game into `Build/ClimbingGame.exe` (the folder is not in git). Either in Unity: File > Build Profiles > Windows > Build, choosing `Build/ClimbingGame.exe` in the repository root; or from the repository root:
+## Build the game (optional)
+
+The included `Build/ClimbingGame.exe` was built with Unity 6000.4.8f1. Keep the entire `Build/` folder together; the executable needs its data folder and libraries. To rebuild after changing the Unity project, use File > Build Profiles > Windows > Build, choosing `Build/ClimbingGame.exe` in the repository root; or from the repository root:
 
 ```powershell
 & "<Unity 6000.4.8f1>\Editor\Unity.exe" -batchmode -quit -projectPath "IPCV Climbing Game" -buildWindows64Player "Build\ClimbingGame.exe"
@@ -36,7 +53,7 @@ Build the Unity game into `Build/ClimbingGame.exe` (the folder is not in git). E
 
 ## Run
 
-1. Double-click `play.bat` (or `python main.py --play` from `Python/`). It starts the game in a window and the webcam tracking together. Closing the game window, or pressing `Q` in the webcam window, stops both.
+1. Double-click `play.bat`. It starts the game in a window and the webcam tracking together. Closing the game window, or pressing `Q` in the webcam window, stops both.
 2. The mirrored webcam window shows each player's skeleton, number and face box. Place it next to the game window.
 3. Both players stand side by side about 2 m from the camera and face it until `P1` and `P2` appear. Player 1 is the one on the left of the screen and controls the left climber.
 4. Distance from the camera is estimated from torso size, so no calibration is needed to start. For more accurate positions, press `C` in the webcam window and both stand upright at 2 m before the 5 second countdown ends (`--calibration-distance` changes the 2 m). A rejected calibration leaves the previous one intact; the terminal explains why.
@@ -46,7 +63,7 @@ When the tracking stops, the terminal prints how long each part of the webcam lo
 
 The face photos follow each player's head tilt. Eye landmarks provide roll; yaw and pitch are not estimated. Photos use the upright, mirrored SFace crop so the tilt is applied only once in Unity.
 
-For development, run the game in the Unity editor instead: open `Assets/Scenes/ClimbingRoom.unity`, press Play, then run `python main.py --webcam` from `Python/`. Without a webcam, `python main.py --demo` sends two fake players.
+For development, run the game in the Unity editor instead: open `Assets/Scenes/ClimbingRoom.unity`, press Play, then run `..\.venv\Scripts\python.exe main.py --webcam` from `Python/`. Without a webcam, `..\.venv\Scripts\python.exe main.py --demo` sends two fake players.
 
 ## How to play
 
@@ -75,7 +92,7 @@ Keyboard mode: player 1 grabs with `Q`/`E` and moves with `W A S D`, player 2 gr
 From `Python/`:
 
 ```powershell
-python -m pytest Pose/tests bridge/tests
+..\.venv\Scripts\python.exe -m pytest Pose/tests bridge/tests
 ```
 
 Unity play mode tests for the bridge are in `Assets/Scripts/Bridge/Tests` (Window > General > Test Runner).
@@ -85,8 +102,8 @@ Unity play mode tests for the bridge are in `Assets/Scripts/Bridge/Tests` (Windo
 IPCV-Project/
 ├── README.md
 ├── play.bat                     # starts the built game and the tracking together
-├── Build/                       # built game (ClimbingGame.exe), not in git
-├── Models/                      # downloaded model files, not in git
+├── Build/                       # Windows game and its runtime files
+├── Models/                      # three required models and their licences
 ├── Python/
 │   ├── main.py                  # entry point: webcam -> tracking -> UDP, or --demo
 │   ├── tracking.py              # runs Face, Pose and Identity on every frame

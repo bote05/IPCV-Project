@@ -4,8 +4,8 @@ Sends the tracking data from Python to Unity over UDP on localhost.
 
 Use Python 3.12 for tracking and Unity 6000.4.8f1. The package-free demo also works on Python 3.10+.
 
-- Port 5005: tracking data as JSON, 30 times per second
-- Port 5006: face crops as 256x256 JPEGs, 10 times per second
+- Port 5005: tracking data as JSON, up to 30 times per second by default
+- Port 5006: face crops as 256x256 JPEGs, up to 10 times per second
 
 ## Demo
 
@@ -23,7 +23,7 @@ The `ClimbingRoom` scene already has `UdpFrameReceiver`, `UdpFaceReceiver`, `Bri
 python Python/main.py --webcam
 ```
 
-`main.py` opens the webcam (1280x720 by default) and calls `tracking.GameTracking.process(frame, captured_time_s)` for every frame. The image is not mirrored and the timestamp is `time.perf_counter()` right after the camera returns the frame. `GameTracking` runs Face and Pose detection concurrently, then Identity and the Pose tracker, and turns each `PlayerPose` into a `PlayerState` with `player_from_pose`. It adds the mirrored face box and, after calibration, the position in metres. The face crops of players 1 and 2 go out 10 times per second. If processing crashes, Unity gets no players until it recovers. A broken face JPEG is just skipped.
+`main.py` opens the webcam (1280x720 by default) and calls `tracking.GameTracking.process(frame, captured_time_s)` for every frame. The image is not mirrored and the timestamp is `time.perf_counter()` right after the camera returns the frame. `GameTracking` runs Face and Pose detection concurrently, then Identity and the Pose tracker, and turns each `PlayerPose` into a `PlayerState` with `player_from_pose`. It adds the mirrored face box and a position in metres when the shoulders and hips are tracked. Positions initially use an assumed torso size; `C` calibrates them at a known distance. The face crops of players 1 and 2 go out up to 10 times per second. If processing crashes, Unity gets no players until it recovers. A broken face JPEG is just skipped.
 
 Use one Python 3.12 virtual environment at the repository root. The shared packages are in `Python/requirements.txt`:
 
@@ -64,7 +64,7 @@ A face packet is the text `IPCF`, the session id, the player id, a counter and t
 2. Position: metres from the camera, x to the right, y down, z away from the camera, measured at the middle of the hips.
 3. Head rotation: the current face module measures roll from the eyes, with 0 meaning level eyes. The pipeline mirrors its sign; Unity converts image-clockwise roll to the photo's local rotation. Yaw and pitch remain neutral, not measurements. Face JPEGs are already upright and mirrored.
 4. Actions: use `hand_raised[0]` for the left hand and `[1]` for the right hand. Events use the callback below. Badr decides their gameplay effects and cooldowns.
-5. Losing a player: let go of everything they were holding and hide their effects.
+5. Losing a player: face effects expire when tracking is lost. While packets continue arriving, the game keeps an existing grip for up to 2 seconds after the last usable arm estimate. A stopped stream releases grips after the bridge's 0.5 second timeout.
 
 ## Using it in Unity
 
@@ -75,7 +75,7 @@ if (receiver.TryGetPlayer(1, out p) && p.TryGetJoint(PoseJoint.LeftWrist, out Po
 if (faces.TryGetTexture(1, out Texture2D face)) { /* show face */ } else { /* hide it */ }
 ```
 
-Call these in `Update`. `TryGetJoint` returns only tracked/predicted positions. The game allows a new grip only with tracked joints and releases it when the arm is lost. Don't change the data you get back.
+Call these in `Update`. `TryGetJoint` returns only tracked/predicted positions. A new grip needs tracked shoulders and either a tracked wrist or a wrist extrapolated from a tracked, raised elbow. Predictions can maintain an existing grip, followed by the loss grace period above. Don't change the data you get back.
 
 Subscribe to `receiver.MotionReceived` in `OnEnable` and unsubscribe in `OnDisable`:
 

@@ -3,6 +3,8 @@
 [Tt]emp/
 [Oo]bj/
 [Bb]uild/
+!/Build/
+/Build/*BurstDebugInformation_DoNotShip/
 [Bb]uilds/
 [Ll]ogs/
 [Uu]ser[Ss]ettings/
@@ -44,6 +46,11 @@ venv/
 !/Models/.gitkeep
 *.task
 *.tflite
+!/Models/face_detection_yunet_2023mar.onnx
+!/Models/face_recognition_sface_2021dec.onnx
+!/Models/pose_landmarker_full.task
+!/Models/README.md
+!/Models/LICENSE-*
 *.mp4
 recordings/
 
