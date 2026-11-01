@@ -15,18 +15,13 @@ frame ─► PoseDetector ─► RawPose per person ─► PoseTracker ─► Pl
 
 ## Setup
 
-MediaPipe has no wheels for Python 3.14; use Python 3.12. From the repository root:
+Use Python 3.12 and follow the [shared setup](../../README.md#quick-start-windows). The Full model is included. From `Python/`:
 
-```
-py -3.12 -m venv .venv
-.venv\Scripts\activate
-pip install -r Python/requirements.txt
-cd Python
-python -m Pose.tools.download_models    # Models/pose_landmarker_full.task (add lite heavy for comparisons)
-python -m pytest Pose/tests
+```powershell
+..\.venv\Scripts\python.exe -m pytest Pose/tests
 ```
 
-All commands below run from `Python/`.
+All commands below run from `Python/`. If the environment is not activated, use `..\.venv\Scripts\python.exe` wherever an example says `python`. To restore a missing Full model, run `python -m Pose.tools.download_models`; add `lite heavy` to download the optional comparison models.
 
 ## Demo
 
@@ -71,7 +66,8 @@ Without `ids`, the tracker links detections frame to frame itself, which is enou
 and for evaluation.
 
 `to_dict` gives one JSON-ready object per player. Image positions are already normalised to 0..1,
-so the bridge does not need the image size. The output uses lists rather than maps so Unity's
+so the bridge forwards them without conversion. The frame also carries the image size so Unity can
+account for the aspect ratio when comparing distances. The output uses lists rather than maps so Unity's
 `JsonUtility` can parse it, and never contains NaN.
 
 **Mirroring:** processing runs on the camera image as is, and `to_dict(..., mirror=True)` flips
@@ -79,8 +75,9 @@ the output for a mirrored display: `x` becomes 1 - x, and body x, horizontal vel
 change sign. Joint names stay the player's own left and right, which on a mirrored display appear
 on the same side of the screen as for the player.
 
-**Events** are repeated in every message for 200 ms (`TrackerConfig.event_hold`), so a dropped
-UDP message cannot lose one. Each event has an `id` that is unique for the session, so Unity acts
+**Events** are repeated in every message for 200 ms (`TrackerConfig.event_hold`) to reduce losses
+from dropped UDP packets. An outage longer than this can still lose an event. Each event has an `id`
+that is unique for the session, so Unity acts
 on each id once and needs no cooldown to avoid double counting.
 
 | field | meaning |

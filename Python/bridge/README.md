@@ -2,7 +2,7 @@
 
 Sends the tracking data from Python to Unity over UDP on localhost.
 
-Use Python 3.12 for tracking and Unity 6000.4.8f1. The package-free demo also works on Python 3.10+.
+Use Python 3.12 for tracking and Unity 6000.4.8f1 for Editor work. The [root README](../../README.md#quick-start-windows) explains how to run the included game without Unity. The package-free demo also works on Python 3.10+.
 
 - Port 5005: tracking data as JSON, up to 30 times per second by default
 - Port 5006: face crops as 256x256 JPEGs, up to 10 times per second
@@ -20,20 +20,12 @@ The `ClimbingRoom` scene already has `UdpFrameReceiver`, `UdpFaceReceiver`, `Bri
 ## Webcam
 
 ```powershell
-python Python/main.py --webcam
+.\.venv\Scripts\python.exe Python/main.py --webcam
 ```
 
 `main.py` opens the webcam (1280x720 by default) and calls `tracking.GameTracking.process(frame, captured_time_s)` for every frame. The image is not mirrored and the timestamp is `time.perf_counter()` right after the camera returns the frame. `GameTracking` runs Face and Pose detection concurrently, then Identity and the Pose tracker, and turns each `PlayerPose` into a `PlayerState` with `player_from_pose`. It adds the mirrored face box and a position in metres when the shoulders and hips are tracked. Positions initially use an assumed torso size; `C` calibrates them at a known distance. The face crops of players 1 and 2 go out up to 10 times per second. If processing crashes, Unity gets no players until it recovers. A broken face JPEG is just skipped.
 
-Use one Python 3.12 virtual environment at the repository root. The shared packages are in `Python/requirements.txt`:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r Python/requirements.txt
-```
-
-Activate this same environment for tracking and tests. It uses `opencv-contrib-python`; do not also install `opencv-python`.
+Use the virtual environment from the [shared setup](../../README.md#quick-start-windows) for tracking and tests. It uses `opencv-contrib-python`; do not also install `opencv-python`.
 
 ## What gets sent
 
@@ -99,7 +91,7 @@ Python and Unity use the same Windows clock, so we can measure how long a frame 
 The CSV's `capture_to_send_ms` (called `processing_ms` in older recordings) and the debug panel use the difference between those timestamps. With `--camera-thread`, that includes waiting before processing; the terminal reports processing time separately. `players_tracked` counts usable poses, including predictions, not correct identities. Record real gameplay with `BridgeMetrics` for the project evaluation.
 
 ```powershell
-python -m unittest discover -s Python/bridge/tests -t Python
+.\.venv\Scripts\python.exe -m unittest discover -s Python/bridge/tests -t Python
 powershell -ExecutionPolicy Bypass -File Python/bridge/tests/run_unity_tests.ps1 -Editor "<path>/Unity.exe"
 ```
 

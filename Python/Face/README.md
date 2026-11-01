@@ -8,10 +8,10 @@ The two players are told apart with OpenCV's SFace face recognizer (about 3 ms p
 
 ## Setup
 
-The models aren't in git. Download them once (they go to `Models/face_detection_yunet_2023mar.onnx` and `Models/face_recognition_sface_2021dec.onnx`), from `Python/`:
+Follow the [shared setup](../../README.md#quick-start-windows). Both models are included in `Models/`. If either is missing, restore it from `Python/`:
 
-```
-python -m Face.download_model
+```powershell
+..\.venv\Scripts\python.exe -m Face.download_model
 ```
 
 Uses the shared `Python/requirements.txt`. Needs the `bridge` and `Pose` packages on the import path, which is the case when running from `Python/`.
