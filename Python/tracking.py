@@ -57,7 +57,7 @@ class GameTracking:
             raise
         faces = face_job.result()
         previous = [p for p in self.players if t - p.time <= self.tracker.config.filter.max_gap]
-        ids, face_of = self.identity.assign(poses, previous, faces)
+        ids, face_of = self.identity.assign(poses, previous, faces, t)
         self.players = self.tracker.update(poses, t, ids)
         for pid, previous in self.face_of.items():
             if pid in ids and pid not in face_of:
