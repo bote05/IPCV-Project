@@ -16,6 +16,7 @@ namespace IPCV.Game
         public float maxPull = 80f;
         public float maxArmLength = 3.2f;
         public float finishHeight = 20.8f;
+        public bool endless;
         [Tooltip("Player 1's and player 2's upper body. Each one can bend at the hips.")]
         public Transform[] upperBodies = new Transform[2];
         [Tooltip("The tube that joins the two bodies. It bends along with the hips.")]
@@ -156,7 +157,7 @@ namespace IPCV.Game
                 BestHeight = height;
             }
 
-            if (transform.position.y >= finishHeight)
+            if (!endless && transform.position.y >= finishHeight)
             {
                 Finished = true;
             }

@@ -242,7 +242,6 @@ class Identity:
         taken = set()
         facesMatched = {}
         assigned = set()
-        self.init_pose_log()
         if not self.known:
             best_faces = self._bestInitialFaces([f for f in faces if f.detected])
 

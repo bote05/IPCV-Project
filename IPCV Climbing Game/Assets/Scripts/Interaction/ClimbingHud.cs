@@ -55,7 +55,7 @@ namespace IPCV.Game
                 {
                     switchTo = "KEYS";
                 }
-                statusText.text = "H / HELP     T / " + switchTo + "     R / RETRY";
+                statusText.text = (climber.endless ? "ENDLESS CLIMB     " : "") + "H / HELP     T / " + switchTo + "     R / RETRY";
             }
 
             controlsText.text = PlayerText(0);

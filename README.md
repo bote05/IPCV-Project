@@ -55,7 +55,8 @@ For development, run the game in the Unity editor instead: open `Assets/Scenes/C
 - Grabbing with your other hand transfers your grip to that hand.
 - If the camera briefly loses a player, for example when a hand covers the face, their climber keeps holding for 2 seconds.
 - Cracked holds break a few seconds after they are grabbed.
-- At the top, the body stays in place. Both players lower their hands and then raise one to climb again. Both players must be visible and within the starting distance to restart.
+- The silo is endless: new sections appear ahead as you climb, with independently randomized holds for each player. The first two rows are forgiving; later rows have wider spacing, smaller grab tolerance and a mix of solid and cracked holds. Each pair always includes a solid hold.
+- Distant sections unload to keep the active level bounded. Falling back recreates the same route; a new Play session chooses a new route. Set `SiloExtender.seed` to a nonzero value for a repeatable layout. Press `R` to retry from the bottom; both players must be ready again in camera mode.
 
 | Where | Key | What |
 |---|---|---|

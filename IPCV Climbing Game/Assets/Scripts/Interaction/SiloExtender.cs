@@ -1,120 +1,162 @@
+using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
 namespace IPCV.Game
 {
-    // Extends the silo by repeating its holds and wall sections.
+    // Keep only nearby sections alive. A section's seed makes falls/revisits reproduce its route.
+    [DefaultExecutionOrder(-20)]
     public sealed class SiloExtender : MonoBehaviour
     {
         public ClimberBody climber;
-        [Tooltip("Rows of holds added above the 15 in the scene. Rows are 1.35 m apart; 8 rows make a climb of about 30 m.")]
-        public int extraRows = 8;
-        private const int SceneRows = 15;
-        private const float RowSpacing = 1.35f;
-        // Wall panels and ribs are 25 m tall; beams, light strips and height marks repeat every 4 m up to 24 m.
-        private const float WallHeight = 25f;
-        private const float FloorsHeight = 24f;
-        // One copy reaches 48 m, which covers the view at a 30 m climb. Raise it for longer climbs.
-        private const int Copies = 1;
+        [Tooltip("Zero chooses a fresh route each time Play starts; otherwise reproducible.")]
+        public int seed;
+        private const float SectionHeight = 24f;
+        private const int Rows = 16;
+        private readonly Dictionary<int, GameObject> sections = new Dictionary<int, GameObject>();
+        private readonly List<Transform> scenery = new List<Transform>();
+        private readonly List<Transform>[] solid = { new List<Transform>(), new List<Transform>() };
+        private readonly List<Transform>[] cracked = { new List<Transform>(), new List<Transform>() };
+        private readonly Transform[] plates = new Transform[2];
+        private readonly List<Transform> boundaries = new List<Transform>();
+        private int routeSeed;
+        private int currentSection = -1;
 
         private void Awake()
         {
-            var parts = new List<Transform>();
-            foreach (Transform child in transform)
+            if (climber == null) return;
+            routeSeed = seed == 0 ? Guid.NewGuid().GetHashCode() : seed;
+            // Original objects are inactive templates: no runtime material/audio state is copied.
+            foreach (Transform part in transform)
             {
-                parts.Add(child);
+                int side = part.localPosition.x < 0 ? 0 : 1;
+                var hold = part.GetComponent<ClimbingHold>();
+                if (hold != null)
+                {
+                    (hold.breaksWhenUsed ? cracked[side] : solid[side]).Add(part);
+                    part.gameObject.SetActive(false);
+                }
+                else if (part.name == "Hold Plate")
+                {
+                    if (plates[side] == null) plates[side] = part;
+                    part.gameObject.SetActive(false);
+                }
+                else if (part.name == "Wall Panel" || part.name == "Vertical Rib"
+                    || part.name == "Ring Beam" || part.name == "Strip Housing"
+                    || part.name == "Strip Light" || part.name == "Level Mark")
+                {
+                    scenery.Add(part);
+                    part.gameObject.SetActive(false);
+                }
+                else if (part.name == "Left Boundary" || part.name == "Right Boundary")
+                    boundaries.Add(part);
+                else if (part.name == "Exit Sign")
+                    part.gameObject.SetActive(false);
             }
-
-            var holds = new Dictionary<string, Transform>();
-            var plates = new[] { new List<Transform>(), new List<Transform>() };
-            Transform sign = null;
-            foreach (Transform part in parts)
+            if (solid[0].Count == 0 || solid[1].Count == 0)
             {
-                string name = part.name;
-                if (name == "Hold Plate")
-                {
-                    plates[part.localPosition.x < 0 ? 0 : 1].Add(part);
-                }
-                else if (name.StartsWith("Hold "))
-                {
-                    holds[name.Substring(5)] = part;
-                }
-                else if (name == "Wall Panel" || name == "Vertical Rib")
-                {
-                    for (int c = 1; c <= Copies; c++)
-                    {
-                        Copy(part, c * WallHeight);
-                    }
-                }
-                else if (name == "Ring Beam" || name == "Strip Housing" || name == "Strip Light" || name == "Level Mark")
-                {
-                    // The bottom row (floor level) is not repeated.
-                    if (part.localPosition.y < 3f)
-                    {
-                        continue;
-                    }
-                    for (int c = 1; c <= Copies; c++)
-                    {
-                        Transform copy = Copy(part, c * FloorsHeight);
-                        TMP_Text label = copy.GetComponent<TMP_Text>();
-                        if (label != null && int.TryParse(label.text, out int metres))
-                        {
-                            label.text = (metres + (int)(c * FloorsHeight)).ToString("00");
-                        }
-                    }
-                }
-                else if (name == "Left Boundary" || name == "Right Boundary")
-                {
-                    // Keep the bottom where it is and reach the top of the copied walls.
-                    Vector3 scale = part.localScale;
-                    float bottom = part.localPosition.y - scale.y / 2f;
-                    scale.y = (Copies + 1) * WallHeight - bottom;
-                    part.localScale = scale;
-                    part.localPosition = new Vector3(part.localPosition.x, bottom + scale.y / 2f, part.localPosition.z);
-                }
-                else if (name == "Exit Sign")
-                {
-                    sign = part;
-                }
+                Debug.LogError("Endless silo needs a solid hold template on each side.", this);
+                enabled = false;
+                return;
             }
+            climber.endless = true;
+            RefreshSections();
+        }
 
-            plates[0].Sort((a, b) => a.localPosition.y.CompareTo(b.localPosition.y));
-            plates[1].Sort((a, b) => a.localPosition.y.CompareTo(b.localPosition.y));
-            for (int row = SceneRows; row < SceneRows + extraRows; row++)
+        private void Update() { RefreshSections(); }
+
+        private void RefreshSections()
+        {
+            if (climber == null) return;
+            int section = Mathf.Max(0, Mathf.FloorToInt(transform.InverseTransformPoint(climber.transform.position).y / SectionHeight));
+            if (section == currentSection) return;
+            currentSection = section;
+            // One section below protects falls; two ahead hide creation above the camera.
+            int first = Mathf.Max(0, section - 1);
+            int last = section + 2;
+            for (int i = first; i <= last; i++)
+                if (!sections.ContainsKey(i)) CreateSection(i);
+            var retired = new List<int>();
+            foreach (var pair in sections)
             {
-                int source = row % SceneRows;
-                int block = row / SceneRows;
+                if (pair.Key >= first && pair.Key <= last) continue;
+                bool held = false;
+                foreach (var grip in climber.heldHolds)
+                    if (grip != null && grip.transform.IsChildOf(pair.Value.transform)) held = true;
+                if (!held) retired.Add(pair.Key);
+            }
+            foreach (int i in retired)
+            {
+                sections[i].SetActive(false); // Unregister holds immediately, before Destroy's end-of-frame.
+                Destroy(sections[i]);
+                sections.Remove(i);
+            }
+            foreach (var boundary in boundaries)
+            {
+                var scale = boundary.localScale;
+                scale.y = SectionHeight * 5f;
+                boundary.localScale = scale;
+                var position = boundary.localPosition;
+                position.y = section * SectionHeight + SectionHeight;
+                boundary.localPosition = position;
+            }
+        }
+
+        private void CreateSection(int index)
+        {
+            var root = new GameObject("Silo section " + index);
+            root.transform.SetParent(transform, false);
+            sections.Add(index, root);
+            float bottom = index * SectionHeight;
+            foreach (var source in scenery)
+            {
+                // Floor-level beams would overlap the previous section's top beam.
+                if (index > 0 && source.localPosition.y < 3f
+                    && source.name != "Wall Panel" && source.name != "Vertical Rib") continue;
+                var part = Copy(source, root.transform, source.localPosition + Vector3.up * bottom);
+                var label = part.GetComponent<TMP_Text>();
+                if (label != null && int.TryParse(label.text, out int metres))
+                    label.text = (metres + Mathf.RoundToInt(bottom)).ToString("00");
+            }
+            var random = new System.Random(unchecked(routeSeed + index * 7919));
+            float difficulty = Mathf.Clamp01(index / 5f);
+            for (int row = 0; row < Rows; row++)
+            {
+                int globalRow = index * Rows + row;
+                // At most one cracked hold per pair; the other player always has a solid option.
+                int fragileSide = globalRow > 2 && random.NextDouble() < 0.30 + difficulty * 0.15
+                    ? random.Next(2) : -1;
                 for (int side = 0; side < 2; side++)
                 {
-                    string label = source + (side == 0 ? " Left" : " Right");
-                    if (holds.TryGetValue(label, out Transform hold))
+                    bool starter = globalRow < 2;
+                    // Different phases per side remove the old mirrored ladder pattern.
+                    float outward = starter ? 1.8f : 1.45f + (float)random.NextDouble() * (0.7f + difficulty * 0.15f);
+                    float jitter = starter ? 0 : ((float)random.NextDouble() - 0.5f) * 0.28f;
+                    float y = bottom + 3.25f + row * 1.5f + jitter;
+                    var choices = side == fragileSide && cracked[side].Count > 0 ? cracked[side] : solid[side];
+                    var source = choices[random.Next(choices.Count)];
+                    var position = new Vector3(side == 0 ? -outward : outward, y, source.localPosition.z);
+                    var part = Copy(source, root.transform, position);
+                    part.name = "Hold " + globalRow + (side == 0 ? " Left" : " Right");
+                    var hold = part.GetComponent<ClimbingHold>();
+                    hold.grabDistance = starter ? 0.65f : Mathf.Lerp(0.60f, 0.54f, difficulty);
+                    if (plates[side] != null)
                     {
-                        Copy(hold, block * SceneRows * RowSpacing).name = "Hold " + row + (side == 0 ? " Left" : " Right");
+                        var platePosition = position;
+                        platePosition.z = plates[side].localPosition.z;
+                        Copy(plates[side], root.transform, platePosition);
                     }
-                    if (source < plates[side].Count)
-                    {
-                        Copy(plates[side][source], block * SceneRows * RowSpacing);
-                    }
-                }
-            }
-
-            if (climber != null)
-            {
-                climber.finishHeight += extraRows * RowSpacing;
-                // Above the climbers' heads at the finish and in front of the wall, so nothing covers it.
-                if (sign != null)
-                {
-                    sign.localPosition = new Vector3(sign.localPosition.x, climber.finishHeight + 3.5f, -1f);
                 }
             }
         }
 
-        private static Transform Copy(Transform part, float up)
+        private static Transform Copy(Transform source, Transform parent, Vector3 position)
         {
-            Transform copy = Instantiate(part.gameObject, part.parent).transform;
-            copy.name = part.name;
-            copy.localPosition = part.localPosition + Vector3.up * up;
+            var copy = Instantiate(source.gameObject, parent).transform;
+            copy.name = source.name;
+            copy.localPosition = position;
+            copy.gameObject.SetActive(true);
             return copy;
         }
     }
